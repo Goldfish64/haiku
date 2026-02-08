@@ -36,6 +36,9 @@ AddFilesToPackage add-ons kernel busses ata :
 	ide_isa@x86
 	;
 
+AddFilesToPackage add-ons kernel busses hyperv :
+	hyperv_vmbus_acpi@x86,x86_64
+	;
 AddFilesToPackage add-ons kernel busses i2c :
 	pch_i2c@x86,x86_64
 	;
@@ -318,6 +321,8 @@ AddBootModuleSymlinksToPackage
 	dpc
 	efi_gpt
 	generic_ide_pci
+	hyperv@x86,x86_64
+	hyperv_vmbus_acpi@x86,x86_64
 	ide_isa@x86
 	isa@x86,x86_64
 	intel

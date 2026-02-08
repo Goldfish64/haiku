@@ -1,0 +1,15 @@
+SubDir HAIKU_TOP src add-ons kernel bus_managers hyperv ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders hyperv ;
+
+SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
+
+UseHeaders [ FDirName $(HAIKU_TOP) src libs uuid ] : true ;
+
+KernelAddon hyperv :
+	hyperv_module.cpp
+	VMBus.cpp
+	:
+	libuuid_kernel.a
+	;
