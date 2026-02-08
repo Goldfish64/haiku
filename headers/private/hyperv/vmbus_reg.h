@@ -5,6 +5,10 @@
 #ifndef VMBUS_REG_H
 #define VMBUS_REG_H
 
+// HID of VMBus ACPI device
+// This is normally just "VMBus", but acpica seems to need all caps
+#define VMBUS_ACPI_HID_NAME		"VMBUS"
+
 // Fixed interrupt for VMBus messages
 #define VMBUS_SINT_MESSAGE		2
 // Fixed interrupt for VMBus timers

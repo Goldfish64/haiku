@@ -1,3 +1,0 @@
-SubDir HAIKU_TOP src add-ons kernel busses hyperv ;
-
-SubInclude HAIKU_TOP src add-ons kernel busses hyperv hyperv_vmbus_acpi ;

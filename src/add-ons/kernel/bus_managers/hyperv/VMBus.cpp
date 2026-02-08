@@ -5,6 +5,7 @@
 
 
 #include "VMBusPrivate.h"
+#include "VMBusDevicePrivate.h"
 
 #define TRACE_VMBUS
 #ifdef TRACE_VMBUS
@@ -53,14 +54,6 @@ sVMBusMessageSizes[VMBUS_MSGTYPE_MAX] = {
 	0,											// 23
 	0											// VMBUS_MSGTYPE_MODIFY_CHANNEL_RESPONSE
 };
-
-
-static void
-vmbus_eom(void *data, int cpu)
-{
-	x86_write_msr(IA32_MSR_HV_EOM, 0);
-}
-
 
 VMBus::VMBus(device_node *node)
 	:
@@ -235,13 +228,38 @@ VMBus::_HypercallSignalEvent(uint32 connId)
 status_t
 VMBus::_InitInterrupts()
 {
-	// TODO: only configuring CPU 0 right now; for all need to execute on the actual CPU
-	uint8 vector = fInterface->get_irq(fCookie) + 0x20;
+	// Get the VMBus ACPI device
+	char acpiVMBusName[255];
+	status_t status = gACPI->get_device(VMBUS_ACPI_HID_NAME, 0,
+		acpiVMBusName, sizeof(acpiVMBusName));
+	if (status != B_OK) {
+		ERROR("Could not locate VMBus in ACPI\n");
+		return status;
+	}
+	TRACE("VMBus ACPI: %s\n", acpiVMBusName);
 
-	// Wire up the interrupt handler
-	status_t status = fInterface->setup_interrupt(fCookie, _InterruptHandler, this);
+	acpi_handle acpiVMBusHandle;
+	status = gACPI->get_handle(NULL, acpiVMBusName, &acpiVMBusHandle);
 	if (status != B_OK)
 		return status;
+
+	uint8 irq;
+	status = gACPI->walk_resources(acpiVMBusHandle, (ACPI_STRING)"_CRS",
+		_InterruptACPICallback, &irq);
+	if (status != B_OK)
+		return status;
+	if (irq == 0)
+		return B_IO_ERROR;
+
+	// Wire up the interrupt handler to the ACPI provided IRQ
+	// TODO: Get the vector offset here for x86, and determine vector on ARM64
+	uint8 vector = irq + 0x20;
+	TRACE("VMBus irq interrupt line: %u, vector: %u\n", irq, vector);
+	status = install_io_interrupt_handler(irq, _InterruptHandler, this, 0);
+	if (status != B_OK) {
+		ERROR("Can't install interrupt handler\n");
+		return status;
+	}
 
 	phys_addr_t messagesPhysAddr = hyperv_mem_vtophys((void*)fCPUData[0].messages);
 	phys_addr_t eventFlagsPhysAddr = hyperv_mem_vtophys((void*)fCPUData[0].event_flags);
@@ -284,6 +302,19 @@ VMBus::_InitInterrupts()
 	x86_write_msr(IA32_MSR_HV_SCONTROL, msr);
 	TRACE("SCONTROL new msr 0x%lX\n", msr);
 
+	return B_OK;
+}
+
+
+/*static*/ acpi_status
+VMBus::_InterruptACPICallback(ACPI_RESOURCE* res, void* context)
+{
+	uint8* irq = static_cast<uint8*>(context);
+
+	// Grab the first IRQ only. Gen1 usually has two IRQs, Gen2 just one.
+	// Only one IRQ is required for the VMBus device.
+	if (res->Type == ACPI_RESOURCE_TYPE_IRQ && *irq == 0)
+		*irq = res->Data.Irq.Interrupt;
 	return B_OK;
 }
 
@@ -500,7 +531,14 @@ VMBus::_EomMessage(int32_t cpu)
 
 	// Trigger EOM on target CPU if another message is pending
 	if (message->message_flags & HV_MESSAGE_FLAGS_PENDING)
-		call_single_cpu(cpu, vmbus_eom, NULL);
+		call_single_cpu(cpu, _WriteEomMsr, NULL);
+}
+
+
+/*static*/ void
+VMBus::_WriteEomMsr(void *data, int cpu)
+{
+	x86_write_msr(IA32_MSR_HV_EOM, 0);
 }
 
 
@@ -582,23 +620,11 @@ VMBus::_RequestChannels()
 	message->header.type = VMBUS_MSGTYPE_REQUEST_CHANNELS;
 	message->header.reserved = 0;
 
-	// Start request channels
-	TRACE("Request channels start\n");
-	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_REQUEST_CHANNELS_DONE);
 	status_t status = _SendMessage(msgInfo);
 	if (status != B_OK)
 		return status;
 
-	// Wait for done message
-	status = _WaitForMsgInfo(msgInfo);
-	if (status != B_OK) {
-		_RemoveActiveMsgInfo(msgInfo);
-		_ReturnFreeMsgInfo(msgInfo);
-		return status;
-	}
 	_ReturnFreeMsgInfo(msgInfo);
-
-	TRACE("Request channels done\n");
 	return B_OK;
 }
 
@@ -606,8 +632,169 @@ VMBus::_RequestChannels()
 void
 VMBus::_HandleChannelOffer(vmbus_msg_channel_offer *message)
 {
-	char str[100];
+	char typeStr[40];
+	char instanceStr[40];
 
-	uuid_unparse(message->type_id, str);
-	TRACE("New VMBus channel %u, type %s\n", message->channel_id, str);
+	uuid_unparse_lower(message->type_id, typeStr);
+	uuid_unparse_lower(message->instance_id, instanceStr);
+
+	TRACE("New VMBus channel %u, type %s\n", message->channel_id, typeStr);
+
+	device_attr attributes[] = {
+		{ B_DEVICE_BUS, B_STRING_TYPE,
+			{ .string = HYPERV_BUS_NAME }},
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{ .string = "Hyper-V Virtual Machine Device" }},
+		{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
+			{ .ui32 = message->channel_id }},
+		{ HYPERV_DEVICE_TYPE_ITEM, B_STRING_TYPE,
+			{ .string = typeStr }},
+		{ HYPERV_INSTANCE_ID_ITEM, B_STRING_TYPE,
+			{ .string = instanceStr }},
+		NULL
+	};
+
+	// Publish child device node for the VMBus channel
+	gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME,
+		attributes, NULL, NULL);
 }
+
+
+static status_t
+hyperv_detect()
+{
+	CALLED();
+
+	// Check for hypervisor.
+	cpu_ent *cpu = get_cpu_struct();
+	if ((cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_HYPERVISOR) == 0) {
+		TRACE("No hypervisor detected\n");
+		return B_ERROR;
+	}
+
+	// Check for Hyper-V CPUID leaves.
+	cpuid_info cpuInfo;
+	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HYPERVISOR, 0);
+	if (cpuInfo.regs.eax < IA32_CPUID_LEAF_HV_IMP_LIMITS) {
+		TRACE("Not running on Hyper-V\n");
+		return B_ERROR;
+	}
+
+	// Check for Hyper-V signature.
+	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HV_INT_ID, 0);
+	if (cpuInfo.regs.eax != HV_CPUID_INTERFACE_ID) {
+		TRACE("Not running on Hyper-V\n");
+		return B_ERROR;
+	}
+
+#ifdef TRACE_HYPERV
+	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HV_SYS_ID, 0);
+	TRACE("Hyper-V version: %d.%d.%d [SP%d]\n", cpuInfo.regs.ebx >> 16, cpuInfo.regs.ebx & 0xFFFF,
+		cpuInfo.regs.eax, cpuInfo.regs.ecx);
+#endif
+
+	return B_OK;
+}
+
+
+static float
+vmbus_supports_device(device_node* parent)
+{
+	CALLED();
+	const char* bus;
+
+	// Check if the parent is the root node
+	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK) {
+		TRACE("Could not find required attribute device/bus\n");
+		return -1;
+	}
+
+	if (strcmp(bus, "root") != 0)
+		return 0.0f;
+
+	status_t status = hyperv_detect();
+	if (status != B_OK)
+		return 0.0f;
+	
+	return 0.8f;
+}
+
+
+static status_t
+vmbus_init_driver(device_node* node, void** _driverCookie)
+{
+	CALLED();
+
+	VMBus* vmbus = new(std::nothrow) VMBus(node);
+	if (vmbus == NULL) {
+		ERROR("Unable to allocate VMBus\n");
+		return B_NO_MEMORY;
+	}
+
+	status_t status = vmbus->InitCheck();
+	if (status != B_OK) {
+		ERROR("failed to set up VMBus device object\n");
+		delete vmbus;
+		return status;
+	}
+	TRACE("VMBus object created\n");
+
+	*_driverCookie = vmbus;
+	return B_OK;
+}
+
+
+static void
+vmbus_uninit_driver(void* driverCookie)
+{
+	CALLED();
+	VMBus* vmbus = (VMBus*)driverCookie;
+	delete vmbus;
+}
+
+
+static status_t
+vmbus_register_device(device_node* parent)
+{
+	CALLED();
+	device_attr attributes[] = {
+		{ B_DEVICE_BUS, B_STRING_TYPE, { .string = HYPERV_BUS_NAME }},
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "Hyper-V Virtual Machine Bus" }},
+		{ NULL }
+	};
+
+	return gDeviceManager->register_node(parent, HYPERV_VMBUS_MODULE_NAME,
+		attributes, NULL, NULL);
+}
+
+
+static status_t
+std_ops(int32 op, ...)
+{
+	switch (op) {
+		case B_MODULE_INIT:
+		case B_MODULE_UNINIT:
+			return B_OK;
+
+		default:
+			break;
+	}
+
+	return B_ERROR;
+}
+
+
+driver_module_info gVMBusModule = {
+	{
+		HYPERV_VMBUS_MODULE_NAME,
+		0,
+		std_ops
+	},
+	vmbus_supports_device,
+	vmbus_register_device,
+	vmbus_init_driver,
+	vmbus_uninit_driver,
+	NULL,	// removed device
+	NULL,	// register child devices
+	NULL,	// rescan bus
+};

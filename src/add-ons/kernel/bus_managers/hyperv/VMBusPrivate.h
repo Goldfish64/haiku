@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <ACPI.h>
+#include "acpi.h"
 #include <arch_cpu.h>
 #include <condition_variable.h>
 #include <cpu.h>
@@ -20,13 +22,16 @@
 #include <util/AutoLock.h>
 #include <util/DoublyLinkedList.h>
 
+#include <hyperv.h>
 #include <hyperv_reg.h>
-#include <vmbus.h>
 #include <vmbus_reg.h>
 
-#include "hyperv_private.h"
+#include "HyperVPrivate.h"
 
 class VMBus;
+class VMBusDevice;
+
+extern driver_module_info gVMBusModule;
 
 typedef struct {
 	VMBus*							vmbus;
@@ -59,10 +64,11 @@ private:
 			uint16					_HypercallSignalEvent(uint32 connId);
 
 			status_t				_InitInterrupts();
+	static	acpi_status				_InterruptACPICallback(ACPI_RESOURCE* res, void* context);
 	static	int32					_InterruptHandler(void *data);
 			int32					_Interrupt();
 	static	void					_DPCHandler(void *data);
-			void						_DPCMessage(int32_t cpu);
+			void					_DPCMessage(int32_t cpu);
 
 			VMBusMsgInfo*			_AllocMsgInfo();
 			void					_ReturnFreeMsgInfo(VMBusMsgInfo *msgInfo);
@@ -73,6 +79,7 @@ private:
 										vmbus_msg *message, uint32 messageSize);
 			status_t				_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize = 0);
 			void					_EomMessage(int32_t cpu);
+	static	void					_WriteEomMsr(void* data, int cpu);
 
 			status_t				_ConnectVersion(uint32 version);
 			status_t				_Connect();

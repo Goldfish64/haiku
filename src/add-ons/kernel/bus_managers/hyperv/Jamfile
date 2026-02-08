@@ -4,12 +4,15 @@ UsePrivateKernelHeaders ;
 UsePrivateHeaders hyperv ;
 
 SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
+SubDirHdrs $(HAIKU_TOP) src add-ons kernel bus_managers acpi acpica include ;
+SubDirHdrs $(HAIKU_TOP) src add-ons kernel bus_managers acpi acpica include platform ;
 
 UseHeaders [ FDirName $(HAIKU_TOP) src libs uuid ] : true ;
 
 KernelAddon hyperv :
-	hyperv_module.cpp
+	HyperVModule.cpp
 	VMBus.cpp
+	VMBusDevice.cpp
 	:
 	libuuid_kernel.a
 	;

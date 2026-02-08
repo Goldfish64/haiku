@@ -19,9 +19,6 @@ AddFilesToPackage add-ons kernel busses ata :
 	highpoint_ide_pci
 	ide_isa@x86
 	;
-AddFilesToPackage add-ons kernel busses hyperv :
-	hyperv_vmbus_acpi@x86,x86_64
-	;
 AddFilesToPackage add-ons kernel busses pci :
 	<pci>designware@riscv64
 	<pci>ecam@riscv64,arm,arm64
@@ -323,7 +320,6 @@ AddBootModuleSymlinksToPackage
 	virtio_block
 	virtio_scsi
 	hyperv@x86,x86_64
-	hyperv_vmbus_acpi@x86,x86_64
 	efi_gpt
 	intel
 	bfs
