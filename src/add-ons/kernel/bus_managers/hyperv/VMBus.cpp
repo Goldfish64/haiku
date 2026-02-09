@@ -54,6 +54,33 @@ sVMBusMessageSizes[VMBUS_MSGTYPE_MAX] = {
 	0											// VMBUS_MSGTYPE_MODIFY_CHANNEL_RESPONSE
 };
 
+// VMBus device pretty name lookup
+static const struct {
+	const char* type_id;
+	const char* name;
+} sVMBusPrettyNames[] = {
+	{ VMBUS_TYPE_AVMA,			HYPERV_PRETTYNAME_AVMA },
+	{ VMBUS_TYPE_BALLOON,		HYPERV_PRETTYNAME_BALLOON },
+	{ VMBUS_TYPE_DISPLAY,		HYPERV_PRETTYNAME_DISPLAY },
+	{ VMBUS_TYPE_FIBRECHANNEL,	HYPERV_PRETTYNAME_FIBRECHANNEL },
+	{ VMBUS_TYPE_FILECOPY,		HYPERV_PRETTYNAME_FILECOPY },
+	{ VMBUS_TYPE_HEARTBEAT,		HYPERV_PRETTYNAME_HEARTBEAT },
+	{ VMBUS_TYPE_IDE,			HYPERV_PRETTYNAME_IDE },
+	{ VMBUS_TYPE_KEYBOARD,		HYPERV_PRETTYNAME_KEYBOARD },
+	{ VMBUS_TYPE_KVP,			HYPERV_PRETTYNAME_KVP },
+	{ VMBUS_TYPE_MOUSE,			HYPERV_PRETTYNAME_MOUSE },
+	{ VMBUS_TYPE_NETWORK,		HYPERV_PRETTYNAME_NETWORK },
+	{ VMBUS_TYPE_PCI,			HYPERV_PRETTYNAME_PCI },
+	{ VMBUS_TYPE_RDCONTROL,		HYPERV_PRETTYNAME_RDCONTROL },
+	{ VMBUS_TYPE_RDMA,			HYPERV_PRETTYNAME_RDMA },
+	{ VMBUS_TYPE_RDVIRT,		HYPERV_PRETTYNAME_RDVIRT },
+	{ VMBUS_TYPE_SCSI,			HYPERV_PRETTYNAME_SCSI },
+	{ VMBUS_TYPE_SHUTDOWN,		HYPERV_PRETTYNAME_SHUTDOWN },
+	{ VMBUS_TYPE_TIMESYNC,		HYPERV_PRETTYNAME_TIMESYNC },
+	{ VMBUS_TYPE_VSS,			HYPERV_PRETTYNAME_VSS }
+};
+
+
 VMBus::VMBus(device_node *node)
 	:
 	fNode(node),
@@ -623,19 +650,36 @@ VMBus::_RequestChannels()
 void
 VMBus::_HandleChannelOffer(vmbus_msg_channel_offer *message)
 {
-	char typeStr[40];
-	char instanceStr[40];
+	char typeStr[37];
+	char instanceStr[37];
 
-	uuid_unparse_lower(message->type_id, typeStr);
-	uuid_unparse_lower(message->instance_id, instanceStr);
+	snprintf(typeStr, sizeof (typeStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		message->type_id.data1, message->type_id.data2, message->type_id.data3,
+		message->type_id.data4[0], message->type_id.data4[1], message->type_id.data4[2],
+		message->type_id.data4[3], message->type_id.data4[4], message->type_id.data4[5],
+		message->type_id.data4[6], message->type_id.data4[7]);
+	snprintf(instanceStr, sizeof (instanceStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		message->instance_id.data1, message->instance_id.data2, message->instance_id.data3,
+		message->instance_id.data4[0], message->instance_id.data4[1], message->instance_id.data4[2],
+		message->instance_id.data4[3], message->instance_id.data4[4], message->instance_id.data4[5],
+		message->instance_id.data4[6], message->instance_id.data4[7]);
+	TRACE("New VMBus channel %u type %s inst %s\n", message->channel_id, typeStr, instanceStr);
 
-	TRACE("New VMBus channel %u, type %s\n", message->channel_id, typeStr);
+	// Get the pretty name
+	const char* prettyName = HYPERV_PRETTYNAME_UNKNOWN;
+	uint32 numNames = sizeof (sVMBusPrettyNames) / sizeof (sVMBusPrettyNames[0]);
+	for (uint32 i = 0; i < numNames; i++) {
+		if (strcmp(typeStr, sVMBusPrettyNames[i].type_id) == 0) {
+			prettyName = sVMBusPrettyNames[i].name;
+			break;
+		}
+	}
 
 	device_attr attributes[] = {
 		{ B_DEVICE_BUS, B_STRING_TYPE,
 			{ .string = HYPERV_BUS_NAME }},
 		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = "Hyper-V Virtual Machine Device" }},
+			{ .string = prettyName }},
 		{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
 			{ .ui32 = message->channel_id }},
 		{ HYPERV_DEVICE_TYPE_ITEM, B_STRING_TYPE,
@@ -749,8 +793,10 @@ vmbus_register_device(device_node* parent)
 {
 	CALLED();
 	device_attr attributes[] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE, { .string = HYPERV_BUS_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "Hyper-V Virtual Machine Bus" }},
+		{ B_DEVICE_BUS, B_STRING_TYPE,
+			{ .string = HYPERV_BUS_NAME }},
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{ .string = HYPERV_PRETTYNAME_VMBUS }},
 		{ NULL }
 	};
 

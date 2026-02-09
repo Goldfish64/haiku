@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <uuid.h>
-
 #include <hyperv.h>
 #include <hyperv_reg.h>
 #include <vmbus_reg.h>

@@ -19,20 +19,48 @@
 // Fixed connection ID for events
 #define VMBUS_CONNID_EVENTS			2
 
-#define MAKE_VMBUS_VERSION(major, minor)    ((((major) << 16) & 0xFFFF0000) | ((minor) & 0x0000FFFF))
-#define GET_VMBUS_VERSION_MAJOR(version)    (((version) >> 16) & 0xFFFF)
-#define GET_VMBUS_VERSION_MINOR(version)    ((version) & 0xFFFF)
+#define MAKE_VMBUS_VERSION(major, minor)	((((major) << 16) & 0xFFFF0000) | ((minor) & 0x0000FFFF))
+#define GET_VMBUS_VERSION_MAJOR(version)	(((version) >> 16) & 0xFFFF)
+#define GET_VMBUS_VERSION_MINOR(version)	((version) & 0xFFFF)
 
-#define VMBUS_VERSION_WS2008              MAKE_VMBUS_VERSION(0, 13)
-#define VMBUS_VERSION_WS2008R2            MAKE_VMBUS_VERSION(1, 1)
-#define VMBUS_VERSION_WIN8_WS2012         MAKE_VMBUS_VERSION(2, 4)
-#define VMBUS_VERSION_WIN81_WS2012R2      MAKE_VMBUS_VERSION(3, 0)
-#define VMBUS_VERSION_WIN10_RS1_WS2016    MAKE_VMBUS_VERSION(4, 0)
-#define VMBUS_VERSION_WIN10_RS3           MAKE_VMBUS_VERSION(4, 1)
-#define VMBUS_VERSION_WIN10_V5            MAKE_VMBUS_VERSION(5, 0)
-#define VMBUS_VERSION_WIN10_RS4           MAKE_VMBUS_VERSION(5, 1)
-#define VMBUS_VERSION_WIN10_RS5_WS2019    MAKE_VMBUS_VERSION(5, 2)
-#define VMBUS_VERSION_WS2022              MAKE_VMBUS_VERSION(5, 3)
+#define VMBUS_VERSION_WS2008				MAKE_VMBUS_VERSION(0, 13)
+#define VMBUS_VERSION_WS2008R2				MAKE_VMBUS_VERSION(1, 1)
+#define VMBUS_VERSION_WIN8_WS2012			MAKE_VMBUS_VERSION(2, 4)
+#define VMBUS_VERSION_WIN81_WS2012R2		MAKE_VMBUS_VERSION(3, 0)
+#define VMBUS_VERSION_WIN10_RS1_WS2016		MAKE_VMBUS_VERSION(4, 0)
+#define VMBUS_VERSION_WIN10_RS3				MAKE_VMBUS_VERSION(4, 1)
+#define VMBUS_VERSION_WIN10_V5				MAKE_VMBUS_VERSION(5, 0)
+#define VMBUS_VERSION_WIN10_RS4				MAKE_VMBUS_VERSION(5, 1)
+#define VMBUS_VERSION_WIN10_RS5_WS2019		MAKE_VMBUS_VERSION(5, 2)
+#define VMBUS_VERSION_WS2022				MAKE_VMBUS_VERSION(5, 3)
+
+// VMBus device types
+#define VMBUS_TYPE_AVMA				"3375baf4-9e15-4b30-b765-67acb10d607b"
+#define VMBUS_TYPE_BALLOON			"525074dc-8985-46e2-8057-a307dc18a502"
+#define VMBUS_TYPE_DISPLAY			"da0a7802-e377-4aac-8e77-0558eb1073f8"
+#define VMBUS_TYPE_FIBRECHANNEL		"2f9bcc4a-0069-4af3-b76b-6fd0be528cda"
+#define VMBUS_TYPE_FILECOPY			"34d14be3-dee4-41c8-9ae7-6b174977c192"
+#define VMBUS_TYPE_HEARTBEAT		"57164f39-9115-4e78-ab55-382f3bd5422d"
+#define VMBUS_TYPE_IDE				"32412632-86cb-44a2-9b5c-50d1417354f5"
+#define VMBUS_TYPE_KEYBOARD			"f912ad6d-2b17-48ea-bd65-f927a61c7684"
+#define VMBUS_TYPE_KVP				"a9a0f4e7-5a45-4d96-b827-8a841e8c03e6"
+#define VMBUS_TYPE_MOUSE			"cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a"
+#define VMBUS_TYPE_NETWORK			"f8615163-df3e-46c5-913f-f2d2f965ed0e"
+#define VMBUS_TYPE_PCI				"44c4f61d-4444-4400-9d52-802e27ede19f"
+#define VMBUS_TYPE_RDCONTROL		"f8e65716-3cb3-4a06-9a60-1889c5cccab5"
+#define VMBUS_TYPE_RDMA				"8c2eaf3d-32a7-4b09-ab99-bd1f1c86b501"
+#define VMBUS_TYPE_RDVIRT			"276aacf4-ac15-426c-98dd-7521ad3f01fe"
+#define VMBUS_TYPE_SCSI				"ba6163d9-04a1-4d29-b605-72e2ffb1dc7f"
+#define VMBUS_TYPE_SHUTDOWN			"0e0b6031-5213-4934-818b-38d90ced39db"
+#define VMBUS_TYPE_TIMESYNC			"9527e630-d0ae-497b-adce-e80ab0175caf"
+#define VMBUS_TYPE_VSS				"35fa2e29-ea23-4236-96ae-3a6ebacba440"
+
+typedef struct {
+	uint32	data1;
+	uint16	data2;
+	uint16	data3;
+	uint8	data4[8];
+} _PACKED vmbus_guid_t;
 
 enum { // VMBus message type
 	VMBUS_MSGTYPE_INVALID					= 0,
@@ -66,12 +94,11 @@ typedef struct { // VMBus message header
 typedef struct { // VMBus channel offer message from Hyper-V
 	vmbus_msg_header header;
 
-	uuid_t	type_id;
-	uuid_t	instance_id;
-	uint64	reserved1[2];
-
-	uint16	flags;
-	uint16	mmio_size_mb;
+	vmbus_guid_t	type_id;
+	vmbus_guid_t	instance_id;
+	uint64			reserved1[2];
+	uint16			flags;
+	uint16			mmio_size_mb;
 
 	union {
 		struct {

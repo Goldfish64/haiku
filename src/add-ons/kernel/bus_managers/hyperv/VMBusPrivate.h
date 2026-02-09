@@ -18,7 +18,6 @@
 #include <dpc.h>
 #include <lock.h>
 #include <smp.h>
-#include <uuid.h>
 #include <util/AutoLock.h>
 #include <util/DoublyLinkedList.h>
 
