@@ -43,51 +43,6 @@ hyperv_mem_vtophys(void* vaddr)
 }
 
 
-static status_t
-hyperv_added_device(device_node* parent)
-{
-	CALLED();
-	device_attr attributes[] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE, { .string = HYPERV_BUS_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "Hyper-V VMBus root" }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, HYPERV_BUS_MODULE_NAME,
-		attributes, NULL, NULL);
-}
-
-
-static status_t
-std_ops(int32 op, ...)
-{
-	switch (op) {
-		case B_MODULE_INIT:
-			// Nothing to do
-		case B_MODULE_UNINIT:
-			return B_OK;
-
-		default:
-			break;
-	}
-
-	return B_ERROR;
-}
-
-driver_module_info gHyperVControllerModule = {
-	{
-		HYPERV_CONTROLLER_MODULE_NAME,
-		0,
-		&std_ops
-	},
-	NULL, // supported devices
-	hyperv_added_device,
-	NULL,
-	NULL,
-	NULL
-};
-
-
 module_dependency module_dependencies[] = {
 	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
 	{ B_ACPI_MODULE_NAME, (module_info**)&gACPI },
@@ -97,7 +52,6 @@ module_dependency module_dependencies[] = {
 
 
 module_info* modules[] = {
-	//(module_info* )&gHyperVControllerModule,
 	(module_info* )&gVMBusModule,
 	(module_info* )&gHyperVDeviceModule,
 	NULL

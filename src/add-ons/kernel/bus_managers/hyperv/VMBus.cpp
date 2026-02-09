@@ -5,7 +5,6 @@
 
 
 #include "VMBusPrivate.h"
-#include "VMBusDevicePrivate.h"
 
 #define TRACE_VMBUS
 #ifdef TRACE_VMBUS
@@ -58,8 +57,6 @@ sVMBusMessageSizes[VMBUS_MSGTYPE_MAX] = {
 VMBus::VMBus(device_node *node)
 	:
 	fNode(node),
-	fInterface(NULL),
-	fCookie(NULL),
 	fStatus(B_NO_INIT),
 	fDPCHandle(NULL),
 	fCPUCount(0),
@@ -70,12 +67,6 @@ VMBus::VMBus(device_node *node)
 	fHyperCallPhysAddr(0)
 {
 	CALLED();
-
-	// Get the parent info
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	fStatus = gDeviceManager->get_driver(parent,
-		(driver_module_info**)&fInterface, &fCookie);
-	gDeviceManager->put_node(parent);
 
 	// VMBus management message queue
 	fStatus = gDPC->new_dpc_queue(&fDPCHandle, "hyperv vmbus mgmt msg", B_NORMAL_PRIORITY);

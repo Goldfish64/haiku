@@ -88,8 +88,6 @@ private:
 
 private:
 			device_node* 			fNode;
-			vmbus_bus_interface* 	fInterface;
-			void* 					fCookie;
 			status_t				fStatus;
 			void*					fDPCHandle;
 
