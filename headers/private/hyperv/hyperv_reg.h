@@ -5,7 +5,11 @@
 #ifndef HYPERV_REG_H
 #define HYPERV_REG_H
 
-#define HV_PAGE_SHIFT							12
+// Page sizes for Hyper-V are 4KB on all platforms
+#define HV_PAGE_SIZE			4096
+#define HV_PAGE_SHIFT			12
+#define HV_PAGE_ALIGN(x) 		(((x) + (HV_PAGE_SIZE - 1)) & ~(HV_PAGE_SIZE - 1))
+#define HV_BYTES_TO_PAGES(x)	(HV_PAGE_ALIGN(x) >> HV_PAGE_SHIFT)
 
 // CPUID leaves
 #define IA32_CPUID_LEAF_HYPERVISOR				0x40000000

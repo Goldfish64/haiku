@@ -16,6 +16,7 @@
 #define ERROR(x...)			dprintf("\33[35mvmbus:\33[0m " x)
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
+
 // Ordered list of newest to oldest VMBus versions
 static const uint32
 sVMBusVersions[] = {
@@ -33,18 +34,18 @@ sVMBusMessageSizes[VMBUS_MSGTYPE_MAX] = {
 	sizeof(vmbus_msg_request_channels),			// VMBUS_MSGTYPE_REQUEST_CHANNELS
 	sizeof(vmbus_msg_request_channels_done),	// VMBUS_MSGTYPE_REQUEST_CHANNELS_DONE
 	sizeof(vmbus_msg_open_channel),				// VMBUS_MSGTYPE_OPEN_CHANNEL
-	0,											// VMBUS_MSGTYPE_OPEN_CHANNEL_RESPONSE
-	0,											// VMBUS_MSGTYPE_CLOSE_CHANNEL
+	sizeof(vmbus_msg_open_channel_resp),		// VMBUS_MSGTYPE_OPEN_CHANNEL_RESPONSE
+	sizeof(vmbus_msg_close_channel),			// VMBUS_MSGTYPE_CLOSE_CHANNEL
 	0,											// VMBUS_MSGTYPE_CREATE_GPADL
 	0,											// VMBUS_MSGTYPE_CREATE_GPADL_PAGES
-	0,											// VMBUS_MSGTYPE_CREATE_GPADL_RESPONSE
-	0,											// VMBUS_MSGTYPE_REMOVE_GPADL
-	0,											// VMBUS_MSGTYPE_REMOVE_GPADL_RESPONSE
-	0,											// VMBUS_MSGTYPE_FREE_CHANNEL
+	sizeof(vmbus_msg_create_gpadl_resp),		// VMBUS_MSGTYPE_CREATE_GPADL_RESPONSE
+	sizeof(vmbus_msg_free_gpadl),				// VMBUS_MSGTYPE_FREE_GPADL
+	sizeof(vmbus_msg_free_gpadl_resp),			// VMBUS_MSGTYPE_FREE_GPADL_RESPONSE
+	sizeof(vmbus_msg_free_channel),				// VMBUS_MSGTYPE_FREE_CHANNEL
 	sizeof(vmbus_msg_connect),					// VMBUS_MSGTYPE_CONNECT
 	sizeof(vmbus_msg_connect_resp),				// VMBUS_MSGTYPE_CONNECT_RESPONSE
-	0,											// VMBUS_MSGTYPE_DISCONNECT
-	0,											// VMBUS_MSGTYPE_DISCONNECT_RESPONSE
+	sizeof(vmbus_msg_disconnect),				// VMBUS_MSGTYPE_DISCONNECT
+	0,											// 17
 	0,											// 18
 	0,											// 19
 	0,											// 20
@@ -54,53 +55,23 @@ sVMBusMessageSizes[VMBUS_MSGTYPE_MAX] = {
 	0											// VMBUS_MSGTYPE_MODIFY_CHANNEL_RESPONSE
 };
 
-// VMBus device pretty name lookup
-static const struct {
-	const char* type_id;
-	const char* name;
-} sVMBusPrettyNames[] = {
-	{ VMBUS_TYPE_AVMA,			HYPERV_PRETTYNAME_AVMA },
-	{ VMBUS_TYPE_BALLOON,		HYPERV_PRETTYNAME_BALLOON },
-	{ VMBUS_TYPE_DISPLAY,		HYPERV_PRETTYNAME_DISPLAY },
-	{ VMBUS_TYPE_FIBRECHANNEL,	HYPERV_PRETTYNAME_FIBRECHANNEL },
-	{ VMBUS_TYPE_FILECOPY,		HYPERV_PRETTYNAME_FILECOPY },
-	{ VMBUS_TYPE_HEARTBEAT,		HYPERV_PRETTYNAME_HEARTBEAT },
-	{ VMBUS_TYPE_IDE,			HYPERV_PRETTYNAME_IDE },
-	{ VMBUS_TYPE_KEYBOARD,		HYPERV_PRETTYNAME_KEYBOARD },
-	{ VMBUS_TYPE_KVP,			HYPERV_PRETTYNAME_KVP },
-	{ VMBUS_TYPE_MOUSE,			HYPERV_PRETTYNAME_MOUSE },
-	{ VMBUS_TYPE_NETWORK,		HYPERV_PRETTYNAME_NETWORK },
-	{ VMBUS_TYPE_PCI,			HYPERV_PRETTYNAME_PCI },
-	{ VMBUS_TYPE_RDCONTROL,		HYPERV_PRETTYNAME_RDCONTROL },
-	{ VMBUS_TYPE_RDMA,			HYPERV_PRETTYNAME_RDMA },
-	{ VMBUS_TYPE_RDVIRT,		HYPERV_PRETTYNAME_RDVIRT },
-	{ VMBUS_TYPE_SCSI,			HYPERV_PRETTYNAME_SCSI },
-	{ VMBUS_TYPE_SHUTDOWN,		HYPERV_PRETTYNAME_SHUTDOWN },
-	{ VMBUS_TYPE_TIMESYNC,		HYPERV_PRETTYNAME_TIMESYNC },
-	{ VMBUS_TYPE_VSS,			HYPERV_PRETTYNAME_VSS }
-};
-
 
 VMBus::VMBus(device_node *node)
 	:
 	fNode(node),
 	fStatus(B_NO_INIT),
-	fDPCHandle(NULL),
+	fMessageDPCHandle(NULL),
 	fCPUCount(0),
 	fCPUData(NULL),
 	fVersion(0),
 	fConnectionId(0),
 	fHypercallPage(NULL),
-	fHyperCallPhysAddr(0)
+	fHyperCallPhysAddr(0),
+	fCurrentGPADLHandle(VMBUS_GPADL_NULL),
+	fChannelSem(0),
+	fChannelThread(0)
 {
 	CALLED();
-
-	// VMBus management message queue
-	fStatus = gDPC->new_dpc_queue(&fDPCHandle, "hyperv vmbus mgmt msg", B_NORMAL_PRIORITY);
-	if (fStatus != B_OK) {
-		ERROR("DPC setup failed (%s)\n", strerror(fStatus));
-		return;
-	}
 
 	fStatus = _AllocData();
 	if (fStatus != B_OK) {
@@ -137,9 +108,207 @@ VMBus::~VMBus()
 
 
 status_t
-VMBus::InitCheck()
+VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset)
 {
-	return fStatus;
+	VMBusMsgInfo* msgInfo = _AllocMsgInfo();
+	if (msgInfo == NULL)
+		return B_NO_MEMORY;
+
+	vmbus_msg_open_channel* message = &msgInfo->message->open_channel;
+	message->header.type = VMBUS_MSGTYPE_OPEN_CHANNEL;
+	message->header.reserved = 0;
+
+	message->channel_id = channel;
+	message->open_id = channel;
+	message->gpadl_id = gpadl;
+	message->target_cpu = 0;
+	message->rx_page_offset = rxPageOffset;
+	memset(message->user_data, 0, sizeof(message->user_data));
+
+	TRACE("Opening channel %u with ring GPADL %u\n", channel, gpadl);
+
+	// Send open channel message to Hyper-V
+	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_OPEN_CHANNEL_RESPONSE, channel);
+	status_t status = _SendMessage(msgInfo);
+	if (status != B_OK) {
+		_RemoveActiveMsgInfo(msgInfo);
+		_ReturnFreeMsgInfo(msgInfo);
+		return status;
+	}
+
+	// Wait for open channel response to come back
+	status = _WaitForMsgInfo(msgInfo);
+	if (status != B_OK) {
+		_RemoveActiveMsgInfo(msgInfo);
+		_ReturnFreeMsgInfo(msgInfo);
+		return status;
+	}
+
+	status = (msgInfo->message->open_channel_resp.result == 0
+		&& msgInfo->message->open_channel_resp.open_id == channel)
+		? B_OK : B_IO_ERROR;
+	_ReturnFreeMsgInfo(msgInfo);
+
+	TRACE("Open channel %u status (%s)\n", channel, strerror(status));
+	return status;
+}
+
+
+status_t
+VMBus::CloseChannel(uint32 channel)
+{
+	return B_ERROR;
+}
+
+
+status_t
+VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpadl)
+{
+	// Length must be page-aligned and within bounds
+	if (length == 0 || length != HV_PAGE_ALIGN(length))
+		return B_BAD_VALUE;
+
+	uint32 pageTotalCount = HV_BYTES_TO_PAGES(length);
+	if ((pageTotalCount + 1) > VMBUS_GPADL_MAX_PAGES)
+		return B_BAD_VALUE;
+
+	// Allocate contigous buffer to back the GPADL
+	void *buffer;
+	area_id areaid = create_area("gpadl buffer", &buffer, B_ANY_KERNEL_ADDRESS,
+		length, B_CONTIGUOUS, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
+	if (areaid < B_OK)
+		return B_NO_MEMORY;
+
+	// Get physical address of the newly allocated buffer
+	physical_entry pe;
+	status_t status = get_memory_map(buffer, length, &pe, 1);
+	if (status != B_OK) {
+		delete_area(areaid);
+		return B_ERROR;
+	}
+	memset(buffer, 0, length);
+
+	uint32 gpadl = _GetGPADLHandle();
+
+	// Check if additional messages to transfer all page numbers are required
+	bool needsAddtMsgs = pageTotalCount > VMBUS_MSG_CREATE_GPADL_MAX_PAGES;
+	TRACE("Creating GPADL %u for channel %u with %u pages (multiple: %s)\n", gpadl, channel,
+		pageTotalCount, needsAddtMsgs ? "yes" : "no");
+
+	// Allocate GPADL creation message, this will be held onto until the response comes back
+	VMBusMsgInfo* createMsgInfo = _AllocMsgInfo();
+	if (createMsgInfo == NULL) {
+		delete_area(areaid);
+		return B_NO_MEMORY;
+	}
+
+	// Populate the GPADL creation message
+	uint32 pageMessageCount = needsAddtMsgs
+		? VMBUS_MSG_CREATE_GPADL_MAX_PAGES : pageTotalCount;
+	uint32 messageLength = sizeof(vmbus_msg_create_gpadl)
+		+ (sizeof(uint64) * pageMessageCount);
+
+	vmbus_msg_create_gpadl* createMessage = &createMsgInfo->message->create_gpadl;
+	createMessage->header.type = VMBUS_MSGTYPE_CREATE_GPADL;
+	createMessage->header.reserved = 0;
+
+	createMessage->channel_id = channel;
+	createMessage->gpadl_id = gpadl;
+	createMessage->total_range_length = sizeof(createMessage->ranges)
+		+ (pageTotalCount * sizeof(uint64));
+	createMessage->range_count = 1;
+	createMessage->ranges[0].offset = 0;
+	createMessage->ranges[0].length = length;
+
+	uint64 currentPageNum = (uint64)(pe.address >> HV_PAGE_SHIFT);
+	for (uint32 i = 0; i < pageMessageCount; i++) {
+		createMessage->ranges[0].page_nums[i] = currentPageNum++;
+	}
+
+	// Send GPADL creation message to Hyper-V
+	_AddActiveMsgInfo(createMsgInfo, VMBUS_MSGTYPE_CREATE_GPADL_RESPONSE, gpadl);
+	status = _SendMessage(createMsgInfo, messageLength);
+	if (status != B_OK) {
+		_RemoveActiveMsgInfo(createMsgInfo);
+		_ReturnFreeMsgInfo(createMsgInfo);
+		delete_area(areaid);
+		return status;
+	}
+
+	// Create the additional messages if required
+	if (needsAddtMsgs) {
+		VMBusMsgInfo* addtMsgInfo = _AllocMsgInfo();
+		if (addtMsgInfo == NULL) {
+			_RemoveActiveMsgInfo(createMsgInfo);
+			_ReturnFreeMsgInfo(createMsgInfo);
+			delete_area(areaid);
+			return B_NO_MEMORY;
+		}
+
+		uint32 pagesRemaining = pageTotalCount - pageMessageCount;
+		while (pagesRemaining > 0) {
+			if (pagesRemaining > VMBUS_MSG_CREATE_GPADL_ADDT_MAX_PAGES)
+				pageMessageCount = VMBUS_MSG_CREATE_GPADL_ADDT_MAX_PAGES;
+			else
+				pageMessageCount = pagesRemaining;
+
+			// Populate the GPADL additional pages message
+			messageLength = sizeof(vmbus_msg_create_gpadl)
+				+ (sizeof(uint64) * pageMessageCount);
+
+			vmbus_msg_create_gpadl_addt* addtMessage = &addtMsgInfo->message->create_gpadl_addt;
+			addtMessage->header.type = VMBUS_MSGTYPE_CREATE_GPADL_ADDT;
+			addtMessage->header.reserved = 0;
+
+			addtMessage->gpadl_id = gpadl;
+			for (uint32 i = 0; i < pageMessageCount; i++) {
+				addtMessage->page_nums[i] = currentPageNum++;
+			}
+
+			// Send the GPADL additional pages message to Hyper-V
+			status = _SendMessage(addtMsgInfo, messageLength);
+			if (status != B_OK) {
+				_ReturnFreeMsgInfo(addtMsgInfo);
+				_RemoveActiveMsgInfo(createMsgInfo);
+				_ReturnFreeMsgInfo(createMsgInfo);
+				delete_area(areaid);
+				return status;
+			}
+
+			pagesRemaining -= pageMessageCount;
+		}
+
+		_ReturnFreeMsgInfo(addtMsgInfo);
+	}
+
+	// Wait for GPADL creation response to come back
+	status = _WaitForMsgInfo(createMsgInfo);
+	if (status != B_OK) {
+		_RemoveActiveMsgInfo(createMsgInfo);
+		_ReturnFreeMsgInfo(createMsgInfo);
+		delete_area(areaid);
+		return status;
+	}
+
+	status = createMsgInfo->message->create_gpadl_resp.result == 0 ? B_OK : B_IO_ERROR;
+	_ReturnFreeMsgInfo(createMsgInfo);
+	if (status != B_OK) {
+		delete_area(areaid);
+		return status;
+	}
+
+	TRACE("Created GPADL %u for channel %u\n", gpadl, channel);
+
+	*_buffer = buffer;
+	*_gpadl = gpadl;
+	return B_OK;
+}
+
+
+status_t
+VMBus::FreeGPADL(uint32 channel, uint32 gpadl)
+{
+	return B_ERROR;
 }
 
 
@@ -177,7 +346,7 @@ VMBus::_AllocData()
 		memset((void*)fCPUData[i].messages, 0, sizeof (*fCPUData[i].messages));
 		memset((void*)fCPUData[i].event_flags, 0, sizeof (*fCPUData[i].event_flags));
 	}
-	
+
 	// VMBus event flags and monitor pages
 	fEventFlagsPage = malloc(B_PAGE_SIZE);
 	if (fEventFlagsPage == NULL)
@@ -189,9 +358,27 @@ VMBus::_AllocData()
 	if (fMonitorPage2 == NULL)
 		return B_NO_MEMORY;
 
-	// VMBus message states
+	// Locks
 	mutex_init(&fFreeMsgLock, "vmbus free msg lock");
 	mutex_init(&fActiveMsgLock, "vmbus active msg lock");
+	mutex_init(&fChannelLock, "vmbus chn lock");
+
+	// VMBus management message queue
+	status_t status = gDPC->new_dpc_queue(&fMessageDPCHandle, "hyperv vmbus mgmt msg",
+		B_NORMAL_PRIORITY);
+	if (status != B_OK)
+		return status;
+
+	// Channel management thread
+	fChannelSem = create_sem(0, "vmbus channel sem");
+	if (fChannelSem < B_OK)
+		return fChannelSem;
+
+	fChannelThread = spawn_kernel_thread(_ChannelThreadHandler,
+		"vmbus channel mgmt", B_NORMAL_PRIORITY, this);
+	if (fChannelThread < B_OK)
+		return fChannelThread;
+	resume_thread(fChannelThread);
 
 	return B_OK;
 }
@@ -285,7 +472,7 @@ VMBus::_InitInterrupts()
 	TRACE("SIMP %p SIEFP %p vec %u\n", fCPUData[0].messages, fCPUData[0].event_flags, vector);
 
 	TRACE("SIMP 0x%lX SIEFP 0x%lX\n", messagesPhysAddr, eventFlagsPhysAddr);
-	
+
 	// Configure SIMP and SIEFP
 	uint64 msr = x86_read_msr(IA32_MSR_HV_SIMP);
 	msr = ((messagesPhysAddr >> HV_PAGE_SHIFT) << IA32_MSR_HV_SIMP_PAGE_SHIFT)
@@ -353,7 +540,7 @@ VMBus::_Interrupt()
 
 	// Handoff new VMBus management message to DPC
 	if (message->interrupts[VMBUS_SINT_MESSAGE].message_type != HYPERV_MSGTYPE_NONE) {
-		gDPC->queue_dpc(fDPCHandle, _DPCHandler, &fCPUData[cpu]);
+		gDPC->queue_dpc(fMessageDPCHandle, _MessageDPCHandler, &fCPUData[cpu]);
 	}
 
 	return B_HANDLED_INTERRUPT;
@@ -361,15 +548,15 @@ VMBus::_Interrupt()
 
 
 /*static*/ void
-VMBus::_DPCHandler(void *arg)
+VMBus::_MessageDPCHandler(void *arg)
 {
 	VMBusPerCPUInfo* cpuData = reinterpret_cast<VMBusPerCPUInfo*>(arg);
-	cpuData->vmbus->_DPCMessage(cpuData->cpu);
+	cpuData->vmbus->_MessageDPC(cpuData->cpu);
 }
 
 
 void
-VMBus::_DPCMessage(int32_t cpu)
+VMBus::_MessageDPC(int32_t cpu)
 {
 	volatile hv_message* hvMessage = &fCPUData[cpu].messages->interrupts[VMBUS_SINT_MESSAGE];
 	if (hvMessage->message_type != HYPERV_MSGTYPE_CHANNEL
@@ -389,18 +576,45 @@ VMBus::_DPCMessage(int32_t cpu)
 		return;
 	}
 
-	// Handle channel offers/rescinds only
-	switch (message->header.type) {
-		case VMBUS_MSGTYPE_CHANNEL_OFFER:
-			_HandleChannelOffer(&message->channel_offer);
-			break;
+	if (message->header.type == VMBUS_MSGTYPE_CHANNEL_OFFER) {
+		VMBusChannelInfo* channelInfo = new(std::nothrow) VMBusChannelInfo;
+		if (channelInfo != NULL) {
+			vmbus_msg_channel_offer* offerMessage = &message->channel_offer;
 
-		case VMBUS_MSGTYPE_RESCIND_CHANNEL_OFFER:
-			break;
+			channelInfo->vmbus = this;
+			channelInfo->channel_id = offerMessage->channel_id;
+			channelInfo->type_id = offerMessage->type_id;
+			channelInfo->instance_id = offerMessage->instance_id;
+			channelInfo->node = NULL;
 
-		default:
-			_NotifyActiveMsgInfo(message->header.type, message, hvMessage->payload_size);
-			break;
+			// Add new channel to list and signal the channel handler thread
+			mutex_lock(&fChannelLock);
+			fChannelOfferList.Add(channelInfo, true);
+			mutex_unlock(&fChannelLock);
+
+			release_sem_etc(fChannelSem, 1, B_DO_NOT_RESCHEDULE);
+		}
+	} else if (message->header.type == VMBUS_MSGTYPE_RESCIND_CHANNEL_OFFER) {
+		// TODO: Implement channel removals
+	} else {
+		uint32 respData = 0;
+		switch (message->header.type) {
+			case VMBUS_MSGTYPE_OPEN_CHANNEL_RESPONSE:
+				respData = message->open_channel_resp.channel_id;
+				break;
+
+			case VMBUS_MSGTYPE_CREATE_GPADL_RESPONSE:
+				respData = message->create_gpadl_resp.gpadl_id;
+				break;
+
+			case VMBUS_MSGTYPE_FREE_GPADL_RESPONSE:
+				respData = message->free_gpadl_resp.gpadl_id;
+				break;
+
+			default:
+				break;
+		}
+		_NotifyActiveMsgInfo(message->header.type, respData, message, hvMessage->payload_size);
 	}
 
 	_EomMessage(cpu);
@@ -449,10 +663,11 @@ VMBus::_WaitForMsgInfo(VMBusMsgInfo *msgInfo)
 
 
 inline void
-VMBus::_AddActiveMsgInfo(VMBusMsgInfo *msgInfo, uint32 respType)
+VMBus::_AddActiveMsgInfo(VMBusMsgInfo *msgInfo, uint32 respType, uint32 respData)
 {
 	MutexLocker msgLocker(fActiveMsgLock);
 	msgInfo->resp_type = respType;
+	msgInfo->resp_data = respData;
 	fActiveMsgList.Add(msgInfo);
 	msgLocker.Unlock();
 }
@@ -468,12 +683,12 @@ VMBus::_RemoveActiveMsgInfo(VMBusMsgInfo *msgInfo)
 
 
 void
-VMBus::_NotifyActiveMsgInfo(uint32 respType, vmbus_msg *msg, uint32 msgSize)
+VMBus::_NotifyActiveMsgInfo(uint32 respType, uint32 respData, vmbus_msg *msg, uint32 msgSize)
 {
 	MutexLocker msgLocker(fActiveMsgLock);
 	VMBusMsgInfo* msgInfo = fActiveMsgList.Head();
 	while (msgInfo != NULL) {
-		if (msgInfo->resp_type == respType) {
+		if (msgInfo->resp_type == respType && msgInfo->resp_data == respData) {
 			fActiveMsgList.Remove(msgInfo);
 			msgLocker.Unlock();
 
@@ -481,7 +696,7 @@ VMBus::_NotifyActiveMsgInfo(uint32 respType, vmbus_msg *msg, uint32 msgSize)
 			msgInfo->condition_variable.NotifyAll();
 			return;
 		}
-		
+
 		msgInfo = fActiveMsgList.GetNext(msgInfo);
 	}
 	msgLocker.Unlock();
@@ -497,8 +712,10 @@ VMBus::_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize)
 
 	if (msgSize == 0) {
 		if (msgInfo->message->header.type >= VMBUS_MSGTYPE_MAX)
-			return B_ERROR;
+			return B_BAD_VALUE;
 		msgSize = sVMBusMessageSizes[msgInfo->message->header.type];
+		if (msgSize == 0)
+			return B_BAD_VALUE;
 	}
 
 	hypercall_post_msg_input *postMsg = &msgInfo->post_msg;
@@ -520,7 +737,7 @@ VMBus::_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize)
 			case HYPERCALL_STATUS_INSUFFICIENT_BUFFERS:
 				status = B_NO_MEMORY;
 				break;
-			
+
 			default:
 				status = B_IO_ERROR;
 				complete = true;
@@ -583,8 +800,11 @@ VMBus::_ConnectVersion(uint32 version)
 	// Attempt connection with specified version
 	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_CONNECT_RESPONSE);
 	status_t status = _SendMessage(msgInfo);
-	if (status != B_OK)
+	if (status != B_OK) {
+		_RemoveActiveMsgInfo(msgInfo);
+		_ReturnFreeMsgInfo(msgInfo);
 		return status;
+	}
 
 	// Wait for connection response to come back
 	status = _WaitForMsgInfo(msgInfo);
@@ -647,51 +867,83 @@ VMBus::_RequestChannels()
 }
 
 
-void
-VMBus::_HandleChannelOffer(vmbus_msg_channel_offer *message)
+/*static*/ status_t
+VMBus::_ChannelThreadHandler(void *arg)
 {
-	char typeStr[37];
-	char instanceStr[37];
+	VMBus* vmbus = reinterpret_cast<VMBus*>(arg);
+	return vmbus->_ChannelThread();
+}
 
-	snprintf(typeStr, sizeof (typeStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-		message->type_id.data1, message->type_id.data2, message->type_id.data3,
-		message->type_id.data4[0], message->type_id.data4[1], message->type_id.data4[2],
-		message->type_id.data4[3], message->type_id.data4[4], message->type_id.data4[5],
-		message->type_id.data4[6], message->type_id.data4[7]);
-	snprintf(instanceStr, sizeof (instanceStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-		message->instance_id.data1, message->instance_id.data2, message->instance_id.data3,
-		message->instance_id.data4[0], message->instance_id.data4[1], message->instance_id.data4[2],
-		message->instance_id.data4[3], message->instance_id.data4[4], message->instance_id.data4[5],
-		message->instance_id.data4[6], message->instance_id.data4[7]);
-	TRACE("New VMBus channel %u type %s inst %s\n", message->channel_id, typeStr, instanceStr);
 
-	// Get the pretty name
-	const char* prettyName = HYPERV_PRETTYNAME_UNKNOWN;
-	uint32 numNames = sizeof (sVMBusPrettyNames) / sizeof (sVMBusPrettyNames[0]);
-	for (uint32 i = 0; i < numNames; i++) {
-		if (strcmp(typeStr, sVMBusPrettyNames[i].type_id) == 0) {
-			prettyName = sVMBusPrettyNames[i].name;
-			break;
+status_t
+VMBus::_ChannelThread()
+{
+	while (acquire_sem(fChannelSem) == B_OK) {
+		mutex_lock(&fChannelLock);
+
+		VMBusChannelInfo* newChannel = fChannelOfferList.RemoveHead();
+		if (newChannel != NULL)
+			fChannelRegisteredList.Add(newChannel, true);
+
+		VMBusChannelInfo* oldChannel = fChannelRescindList.RemoveHead();
+		if (oldChannel)
+			fChannelRegisteredList.Remove(oldChannel);
+
+		mutex_unlock(&fChannelLock);
+
+		if (newChannel != NULL) {
+			char typeStr[37];
+			char instanceStr[37];
+
+			snprintf(typeStr, sizeof (typeStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+				newChannel->type_id.data1, newChannel->type_id.data2, newChannel->type_id.data3,
+				newChannel->type_id.data4[0], newChannel->type_id.data4[1], newChannel->type_id.data4[2],
+				newChannel->type_id.data4[3], newChannel->type_id.data4[4], newChannel->type_id.data4[5],
+				newChannel->type_id.data4[6], newChannel->type_id.data4[7]);
+			snprintf(instanceStr, sizeof (instanceStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+				newChannel->instance_id.data1, newChannel->instance_id.data2, newChannel->instance_id.data3,
+				newChannel->instance_id.data4[0], newChannel->instance_id.data4[1], newChannel->instance_id.data4[2],
+				newChannel->instance_id.data4[3], newChannel->instance_id.data4[4], newChannel->instance_id.data4[5],
+				newChannel->instance_id.data4[6], newChannel->instance_id.data4[7]);
+			TRACE("Registering VMBus channel %u type %s inst %s\n", newChannel->channel_id, typeStr, instanceStr);
+
+			// Get the pretty name
+			char prettyName[sizeof (HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT) + 8];
+			snprintf(prettyName, sizeof (prettyName), HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT,
+				newChannel->channel_id);
+
+			device_attr attributes[] = {
+				{ B_DEVICE_BUS, B_STRING_TYPE,
+					{ .string = HYPERV_BUS_NAME }},
+				{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+					{ .string = prettyName }},
+				{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
+					{ .ui32 = newChannel->channel_id }},
+				{ HYPERV_DEVICE_TYPE_ITEM, B_STRING_TYPE,
+					{ .string = typeStr }},
+				{ HYPERV_INSTANCE_ID_ITEM, B_STRING_TYPE,
+					{ .string = instanceStr }},
+				{ NULL }
+			};
+
+			// Publish child device node for the VMBus channel
+			gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME,
+				attributes, NULL, &newChannel->node);
 		}
 	}
 
-	device_attr attributes[] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE,
-			{ .string = HYPERV_BUS_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = prettyName }},
-		{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
-			{ .ui32 = message->channel_id }},
-		{ HYPERV_DEVICE_TYPE_ITEM, B_STRING_TYPE,
-			{ .string = typeStr }},
-		{ HYPERV_INSTANCE_ID_ITEM, B_STRING_TYPE,
-			{ .string = instanceStr }},
-		NULL
-	};
+	return B_OK;
+}
 
-	// Publish child device node for the VMBus channel
-	gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME,
-		attributes, NULL, NULL);
+
+inline uint32
+VMBus::_GetGPADLHandle()
+{
+	uint32 gpadl;
+	do {
+		gpadl = static_cast<uint32>(atomic_add(&fCurrentGPADLHandle, 1));
+	} while (gpadl == VMBUS_GPADL_NULL);
+	return gpadl;
 }
 
 
@@ -750,41 +1002,8 @@ vmbus_supports_device(device_node* parent)
 	status_t status = hyperv_detect();
 	if (status != B_OK)
 		return 0.0f;
-	
+
 	return 0.8f;
-}
-
-
-static status_t
-vmbus_init_driver(device_node* node, void** _driverCookie)
-{
-	CALLED();
-
-	VMBus* vmbus = new(std::nothrow) VMBus(node);
-	if (vmbus == NULL) {
-		ERROR("Unable to allocate VMBus\n");
-		return B_NO_MEMORY;
-	}
-
-	status_t status = vmbus->InitCheck();
-	if (status != B_OK) {
-		ERROR("failed to set up VMBus device object\n");
-		delete vmbus;
-		return status;
-	}
-	TRACE("VMBus object created\n");
-
-	*_driverCookie = vmbus;
-	return B_OK;
-}
-
-
-static void
-vmbus_uninit_driver(void* driverCookie)
-{
-	CALLED();
-	VMBus* vmbus = (VMBus*)driverCookie;
-	delete vmbus;
 }
 
 
@@ -806,6 +1025,76 @@ vmbus_register_device(device_node* parent)
 
 
 static status_t
+vmbus_init_driver(device_node* node, void** _driverCookie)
+{
+	CALLED();
+
+	VMBus* vmbus = new(std::nothrow) VMBus(node);
+	if (vmbus == NULL) {
+		ERROR("Unable to allocate VMBus object\n");
+		return B_NO_MEMORY;
+	}
+
+	status_t status = vmbus->InitCheck();
+	if (status != B_OK) {
+		ERROR("Failed to set up VMBus object\n");
+		delete vmbus;
+		return status;
+	}
+	TRACE("VMBus object created\n");
+
+	*_driverCookie = vmbus;
+	return B_OK;
+}
+
+
+static void
+vmbus_uninit_driver(void* driverCookie)
+{
+	CALLED();
+	VMBus* vmbus = reinterpret_cast<VMBus*>(driverCookie);
+	delete vmbus;
+}
+
+
+static status_t
+vmbus_open_channel(hyperv_bus cookie, uint32 channel, uint32 gpadl, uint32 rxPageOffset)
+{
+	CALLED();
+	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
+	return vmbus->OpenChannel(channel, gpadl, rxPageOffset);
+}
+
+
+static status_t
+vmbus_close_channel(hyperv_bus cookie, uint32 channel)
+{
+	CALLED();
+	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
+	return vmbus->CloseChannel(channel);
+}
+
+
+static status_t
+vmbus_allocate_gpadl(hyperv_bus cookie, uint32 channel, uint32 length,
+	void** _buffer, uint32* _gpadl)
+{
+	CALLED();
+	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
+	return vmbus->AllocateGPADL(channel, length, _buffer, _gpadl);
+}
+
+
+static status_t
+vmbus_free_gpadl(hyperv_bus cookie, uint32 channel, uint32 gpadl)
+{
+	CALLED();
+	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
+	return vmbus->FreeGPADL(channel, gpadl);
+}
+
+
+static status_t
 std_ops(int32 op, ...)
 {
 	switch (op) {
@@ -821,17 +1110,24 @@ std_ops(int32 op, ...)
 }
 
 
-driver_module_info gVMBusModule = {
+hyperv_bus_interface gVMBusModule = {
 	{
-		HYPERV_VMBUS_MODULE_NAME,
-		0,
-		std_ops
+		{
+			HYPERV_VMBUS_MODULE_NAME,
+			0,
+			std_ops
+		},
+		vmbus_supports_device,
+		vmbus_register_device,
+		vmbus_init_driver,
+		vmbus_uninit_driver,
+		NULL,	// removed device
+		NULL,	// register child devices
+		NULL	// rescan bus
 	},
-	vmbus_supports_device,
-	vmbus_register_device,
-	vmbus_init_driver,
-	vmbus_uninit_driver,
-	NULL,	// removed device
-	NULL,	// register child devices
-	NULL,	// rescan bus
+
+	vmbus_open_channel,
+	vmbus_close_channel,
+	vmbus_allocate_gpadl,
+	vmbus_free_gpadl
 };

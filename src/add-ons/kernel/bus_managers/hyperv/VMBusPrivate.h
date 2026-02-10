@@ -28,9 +28,8 @@
 #include "HyperVPrivate.h"
 
 class VMBus;
-class VMBusDevice;
 
-extern driver_module_info gVMBusModule;
+extern hyperv_bus_interface gVMBusModule;
 
 typedef struct {
 	VMBus*							vmbus;
@@ -46,15 +45,33 @@ struct VMBusMsgInfo : DoublyLinkedListLinkImpl<VMBusMsgInfo> {
 	vmbus_msg*					message;
 
 	uint32						resp_type;
+	uint32						resp_data;
 	ConditionVariable			condition_variable;
 };
 typedef DoublyLinkedList<VMBusMsgInfo> VMBusMsgInfoList;
+
+// Active channel info
+struct VMBusChannelInfo : DoublyLinkedListLinkImpl<VMBusChannelInfo> {
+	VMBus*			vmbus;
+	uint32_t		channel_id;
+	vmbus_guid_t	type_id;
+	vmbus_guid_t	instance_id;
+
+	device_node*	node;
+};
+typedef DoublyLinkedList<VMBusChannelInfo> VMBusChannelInfoList;
 
 class VMBus {
 public:
 									VMBus(device_node *node);
 									~VMBus();
-			status_t				InitCheck();
+			status_t				InitCheck() const { return fStatus; }
+
+			status_t				OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset);
+			status_t				CloseChannel(uint32 channel);
+			status_t				AllocateGPADL(uint32 channel, uint32 length, void** _buffer,
+										uint32* _gpadl);
+			status_t				FreeGPADL(uint32 channel, uint32 gpadl);
 
 private:
 			status_t				_AllocData();
@@ -66,15 +83,15 @@ private:
 	static	acpi_status				_InterruptACPICallback(ACPI_RESOURCE* res, void* context);
 	static	int32					_InterruptHandler(void *data);
 			int32					_Interrupt();
-	static	void					_DPCHandler(void *data);
-			void					_DPCMessage(int32_t cpu);
+	static	void					_MessageDPCHandler(void *arg);
+			void					_MessageDPC(int32_t cpu);
 
 			VMBusMsgInfo*			_AllocMsgInfo();
 			void					_ReturnFreeMsgInfo(VMBusMsgInfo *msgInfo);
 	inline	status_t				_WaitForMsgInfo(VMBusMsgInfo *msgInfo);
-	inline	void					_AddActiveMsgInfo(VMBusMsgInfo *msgInfo, uint32 respType);
+	inline	void					_AddActiveMsgInfo(VMBusMsgInfo *msgInfo, uint32 respType, uint32 respData = 0);
 	inline	void					_RemoveActiveMsgInfo(VMBusMsgInfo *msgInfo);
-			void					_NotifyActiveMsgInfo(uint32 respType,
+			void					_NotifyActiveMsgInfo(uint32 respType, uint32 respData,
 										vmbus_msg *message, uint32 messageSize);
 			status_t				_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize = 0);
 			void					_EomMessage(int32_t cpu);
@@ -83,12 +100,14 @@ private:
 			status_t				_ConnectVersion(uint32 version);
 			status_t				_Connect();
 			status_t				_RequestChannels();
-			void					_HandleChannelOffer(vmbus_msg_channel_offer *message);
+	static	status_t				_ChannelThreadHandler(void *arg);
+			status_t				_ChannelThread();
+	inline	uint32					_GetGPADLHandle();
 
 private:
 			device_node* 			fNode;
 			status_t				fStatus;
-			void*					fDPCHandle;
+			void*					fMessageDPCHandle;
 
 			int32					fCPUCount;
 			VMBusPerCPUInfo*		fCPUData;
@@ -104,6 +123,15 @@ private:
 			VMBusMsgInfoList		fActiveMsgList;
 			mutex					fFreeMsgLock;
 			mutex					fActiveMsgLock;
+
+			int32					fCurrentGPADLHandle;
+
+			VMBusChannelInfoList	fChannelOfferList;
+			VMBusChannelInfoList	fChannelRescindList;
+			VMBusChannelInfoList	fChannelRegisteredList;
+			mutex					fChannelLock;
+			sem_id					fChannelSem;
+			thread_id				fChannelThread;
 };
 
 #endif
