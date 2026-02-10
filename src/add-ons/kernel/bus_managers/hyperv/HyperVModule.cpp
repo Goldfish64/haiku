@@ -8,11 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <hyperv.h>
-
 #include "HyperVPrivate.h"
-#include "VMBusPrivate.h"
-#include "VMBusDevicePrivate.h"
 
 #define TRACE_HYPERV
 #ifdef TRACE_HYPERV
@@ -53,6 +49,6 @@ module_dependency module_dependencies[] = {
 
 module_info* modules[] = {
 	(module_info* )&gVMBusModule,
-	(module_info* )&gHyperVDeviceModule,
+	(module_info* )&gVMBusDeviceModule,
 	NULL
 };

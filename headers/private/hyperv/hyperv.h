@@ -56,7 +56,10 @@ typedef struct hyperv_bus_interface {
 // Interface between the VMBus device driver, and the VMBus device bus manager
 typedef struct hyperv_device_interface {
 	driver_module_info info;
-	
+
+	status_t (*open)(hyperv_device cookie, uint32 txLength, uint32 rxLength,
+		hyperv_callback callback, void* callbackData);
+	status_t (*close)(hyperv_device cookie);
 } hyperv_device_interface;
 
 // Device attributes for the VMBus device
@@ -68,4 +71,4 @@ typedef struct hyperv_device_interface {
 // Instance UUID
 #define HYPERV_INSTANCE_ID_ITEM		"hyperv/instance"
 
-#endif /* _HYPERV_H_ */
+#endif // _HYPERV_H_

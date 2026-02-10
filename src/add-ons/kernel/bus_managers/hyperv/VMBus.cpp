@@ -6,16 +6,6 @@
 
 #include "VMBusPrivate.h"
 
-#define TRACE_VMBUS
-#ifdef TRACE_VMBUS
-#	define TRACE(x...) dprintf("\33[35mvmbus:\33[0m " x)
-#else
-#	define TRACE(x...) ;
-#endif
-#define TRACE_ALWAYS(x...)	dprintf("\33[35mvmbus:\33[0m " x)
-#define ERROR(x...)			dprintf("\33[35mvmbus:\33[0m " x)
-#define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
-
 
 // Ordered list of newest to oldest VMBus versions
 static const uint32
@@ -73,12 +63,79 @@ VMBus::VMBus(device_node *node)
 {
 	CALLED();
 
-	fStatus = _AllocData();
-	if (fStatus != B_OK) {
-		ERROR("CPU data allocation failed (%s)\n", strerror(fStatus));
+	// Allocate an executable page for hypercall usage, assuming its page-aligned here
+	fHypercallPage = malloc(B_PAGE_SIZE);
+	if (fHypercallPage == NULL) {
+		fStatus = B_NO_MEMORY;
 		return;
 	}
 
+	physical_entry entry;
+	fStatus = get_memory_map(fHypercallPage, 1, &entry, 1);
+	if (fStatus != B_OK) {
+		return;
+	}
+
+	// Allocate per-CPU state
+	fCPUCount = smp_get_num_cpus();
+	fCPUData = new(std::nothrow) VMBusPerCPUInfo[fCPUCount];
+	if (fCPUData == NULL) {
+		fStatus = B_NO_MEMORY;
+		return;
+	}
+
+	for (int32 i = 0; i < fCPUCount; i++) {
+		fCPUData[i].vmbus = this;
+		fCPUData[i].cpu = i;
+
+		fCPUData[i].messages = (volatile hv_message_page*)
+			malloc(sizeof(hv_message_page));
+		fCPUData[i].event_flags = (volatile hv_event_flags_page*)
+			malloc(sizeof(hv_event_flags_page));
+		if (fCPUData[i].messages == NULL || fCPUData[i].event_flags == NULL) {
+			fStatus = B_NO_MEMORY;
+			return;
+		}
+
+		memset((void*)fCPUData[i].messages, 0, sizeof (*fCPUData[i].messages));
+		memset((void*)fCPUData[i].event_flags, 0, sizeof (*fCPUData[i].event_flags));
+	}
+
+	// Allocate VMBus event flags and monitor pages
+	fEventFlagsPage = malloc(HV_PAGE_SIZE);
+	fMonitorPage1 = malloc(HV_PAGE_SIZE);
+	fMonitorPage2 = malloc(HV_PAGE_SIZE);
+	if (fEventFlagsPage == NULL || fMonitorPage1 == NULL || fMonitorPage2 == NULL) {
+		fStatus = B_NO_MEMORY;
+		return;
+	}
+	
+	mutex_init(&fFreeMsgLock, "vmbus free msg lock");
+	mutex_init(&fActiveMsgLock, "vmbus active msg lock");
+	mutex_init(&fChannelLock, "vmbus chn lock");
+
+	// Create VMBus management message queue
+	fStatus = gDPC->new_dpc_queue(&fMessageDPCHandle, "hyperv vmbus mgmt msg",
+		B_NORMAL_PRIORITY);
+	if (fStatus != B_OK)
+		return;
+
+	// Create and start channel management thread
+	fChannelSem = create_sem(0, "vmbus channel sem");
+	if (fChannelSem < B_OK) {
+		fStatus = fChannelSem;
+		return;
+	}
+
+	fChannelThread = spawn_kernel_thread(_ChannelThreadHandler,
+		"vmbus channel mgmt", B_NORMAL_PRIORITY, this);
+	if (fChannelThread < B_OK) {
+		fStatus = fChannelThread;
+		return;
+	}
+	resume_thread(fChannelThread);
+
+	// Initialize and enable hypercalls
 	fStatus = _InitHypercalls();
 	if (fStatus != B_OK)
 		return;
@@ -87,12 +144,14 @@ VMBus::VMBus(device_node *node)
 	if (fStatus != B_OK)
 		return;
 
+	// Connect to the VMBus
 	fStatus = _Connect();
 	if (fStatus != B_OK) {
 		ERROR("VMBus connection failed (%s)\n", strerror(fStatus));
 		return;
 	}
 
+	// Get the list of current channels
 	fStatus = _RequestChannels();
 	if (fStatus != B_OK) {
 		ERROR("Request VMBus channels failed (%s)\n", strerror(fStatus));
@@ -309,78 +368,6 @@ status_t
 VMBus::FreeGPADL(uint32 channel, uint32 gpadl)
 {
 	return B_ERROR;
-}
-
-
-status_t
-VMBus::_AllocData()
-{
-	// Allocate an executable page for hypercall usage, assuming its page-aligned here
-	fHypercallPage = malloc(B_PAGE_SIZE);
-	if (fHypercallPage == NULL)
-		return B_ERROR;
-
-	fHyperCallPhysAddr = hyperv_mem_vtophys(fHypercallPage);
-	if (fHyperCallPhysAddr == HYPERV_VTOPHYS_ERROR)
-		return B_ERROR;
-
-	fCPUCount = smp_get_num_cpus();
-	fCPUData = new(std::nothrow) VMBusPerCPUInfo[fCPUCount];
-	if (fCPUData == NULL)
-		return B_NO_MEMORY;
-
-	for (int32 i = 0; i < fCPUCount; i++) {
-		fCPUData[i].vmbus = this;
-		fCPUData[i].cpu = i;
-
-		fCPUData[i].messages = (volatile hv_message_page*)
-			malloc(sizeof (hv_message_page));
-		if (fCPUData[i].messages == NULL)
-			return B_NO_MEMORY;
-
-		fCPUData[i].event_flags = (volatile hv_event_flags_page*)
-			malloc(sizeof (hv_event_flags_page));
-		if (fCPUData[i].event_flags == NULL)
-			return B_NO_MEMORY;
-
-		memset((void*)fCPUData[i].messages, 0, sizeof (*fCPUData[i].messages));
-		memset((void*)fCPUData[i].event_flags, 0, sizeof (*fCPUData[i].event_flags));
-	}
-
-	// VMBus event flags and monitor pages
-	fEventFlagsPage = malloc(B_PAGE_SIZE);
-	if (fEventFlagsPage == NULL)
-		return B_NO_MEMORY;
-	fMonitorPage1 = malloc(B_PAGE_SIZE);
-	if (fMonitorPage1 == NULL)
-		return B_NO_MEMORY;
-	fMonitorPage2 = malloc(B_PAGE_SIZE);
-	if (fMonitorPage2 == NULL)
-		return B_NO_MEMORY;
-
-	// Locks
-	mutex_init(&fFreeMsgLock, "vmbus free msg lock");
-	mutex_init(&fActiveMsgLock, "vmbus active msg lock");
-	mutex_init(&fChannelLock, "vmbus chn lock");
-
-	// VMBus management message queue
-	status_t status = gDPC->new_dpc_queue(&fMessageDPCHandle, "hyperv vmbus mgmt msg",
-		B_NORMAL_PRIORITY);
-	if (status != B_OK)
-		return status;
-
-	// Channel management thread
-	fChannelSem = create_sem(0, "vmbus channel sem");
-	if (fChannelSem < B_OK)
-		return fChannelSem;
-
-	fChannelThread = spawn_kernel_thread(_ChannelThreadHandler,
-		"vmbus channel mgmt", B_NORMAL_PRIORITY, this);
-	if (fChannelThread < B_OK)
-		return fChannelThread;
-	resume_thread(fChannelThread);
-
-	return B_OK;
 }
 
 
@@ -945,189 +932,3 @@ VMBus::_GetGPADLHandle()
 	} while (gpadl == VMBUS_GPADL_NULL);
 	return gpadl;
 }
-
-
-static status_t
-hyperv_detect()
-{
-	CALLED();
-
-	// Check for hypervisor.
-	cpu_ent *cpu = get_cpu_struct();
-	if ((cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_HYPERVISOR) == 0) {
-		TRACE("No hypervisor detected\n");
-		return B_ERROR;
-	}
-
-	// Check for Hyper-V CPUID leaves.
-	cpuid_info cpuInfo;
-	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HYPERVISOR, 0);
-	if (cpuInfo.regs.eax < IA32_CPUID_LEAF_HV_IMP_LIMITS) {
-		TRACE("Not running on Hyper-V\n");
-		return B_ERROR;
-	}
-
-	// Check for Hyper-V signature.
-	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HV_INT_ID, 0);
-	if (cpuInfo.regs.eax != HV_CPUID_INTERFACE_ID) {
-		TRACE("Not running on Hyper-V\n");
-		return B_ERROR;
-	}
-
-#ifdef TRACE_HYPERV
-	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HV_SYS_ID, 0);
-	TRACE("Hyper-V version: %d.%d.%d [SP%d]\n", cpuInfo.regs.ebx >> 16, cpuInfo.regs.ebx & 0xFFFF,
-		cpuInfo.regs.eax, cpuInfo.regs.ecx);
-#endif
-
-	return B_OK;
-}
-
-
-static float
-vmbus_supports_device(device_node* parent)
-{
-	CALLED();
-	const char* bus;
-
-	// Check if the parent is the root node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK) {
-		TRACE("Could not find required attribute device/bus\n");
-		return -1;
-	}
-
-	if (strcmp(bus, "root") != 0)
-		return 0.0f;
-
-	status_t status = hyperv_detect();
-	if (status != B_OK)
-		return 0.0f;
-
-	return 0.8f;
-}
-
-
-static status_t
-vmbus_register_device(device_node* parent)
-{
-	CALLED();
-	device_attr attributes[] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE,
-			{ .string = HYPERV_BUS_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = HYPERV_PRETTYNAME_VMBUS }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, HYPERV_VMBUS_MODULE_NAME,
-		attributes, NULL, NULL);
-}
-
-
-static status_t
-vmbus_init_driver(device_node* node, void** _driverCookie)
-{
-	CALLED();
-
-	VMBus* vmbus = new(std::nothrow) VMBus(node);
-	if (vmbus == NULL) {
-		ERROR("Unable to allocate VMBus object\n");
-		return B_NO_MEMORY;
-	}
-
-	status_t status = vmbus->InitCheck();
-	if (status != B_OK) {
-		ERROR("Failed to set up VMBus object\n");
-		delete vmbus;
-		return status;
-	}
-	TRACE("VMBus object created\n");
-
-	*_driverCookie = vmbus;
-	return B_OK;
-}
-
-
-static void
-vmbus_uninit_driver(void* driverCookie)
-{
-	CALLED();
-	VMBus* vmbus = reinterpret_cast<VMBus*>(driverCookie);
-	delete vmbus;
-}
-
-
-static status_t
-vmbus_open_channel(hyperv_bus cookie, uint32 channel, uint32 gpadl, uint32 rxPageOffset)
-{
-	CALLED();
-	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
-	return vmbus->OpenChannel(channel, gpadl, rxPageOffset);
-}
-
-
-static status_t
-vmbus_close_channel(hyperv_bus cookie, uint32 channel)
-{
-	CALLED();
-	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
-	return vmbus->CloseChannel(channel);
-}
-
-
-static status_t
-vmbus_allocate_gpadl(hyperv_bus cookie, uint32 channel, uint32 length,
-	void** _buffer, uint32* _gpadl)
-{
-	CALLED();
-	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
-	return vmbus->AllocateGPADL(channel, length, _buffer, _gpadl);
-}
-
-
-static status_t
-vmbus_free_gpadl(hyperv_bus cookie, uint32 channel, uint32 gpadl)
-{
-	CALLED();
-	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
-	return vmbus->FreeGPADL(channel, gpadl);
-}
-
-
-static status_t
-std_ops(int32 op, ...)
-{
-	switch (op) {
-		case B_MODULE_INIT:
-		case B_MODULE_UNINIT:
-			return B_OK;
-
-		default:
-			break;
-	}
-
-	return B_ERROR;
-}
-
-
-hyperv_bus_interface gVMBusModule = {
-	{
-		{
-			HYPERV_VMBUS_MODULE_NAME,
-			0,
-			std_ops
-		},
-		vmbus_supports_device,
-		vmbus_register_device,
-		vmbus_init_driver,
-		vmbus_uninit_driver,
-		NULL,	// removed device
-		NULL,	// register child devices
-		NULL	// rescan bus
-	},
-
-	vmbus_open_channel,
-	vmbus_close_channel,
-	vmbus_allocate_gpadl,
-	vmbus_free_gpadl
-};

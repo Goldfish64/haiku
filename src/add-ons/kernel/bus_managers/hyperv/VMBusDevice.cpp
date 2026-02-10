@@ -7,68 +7,112 @@
 #include "VMBusDevicePrivate.h"
 
 
-#define TRACE_VMBUS_DEVICE
-#ifdef TRACE_VMBUS_DEVICE
-#	define TRACE(x...) dprintf("\33[36mvmbus_device:\33[0m " x)
-#else
-#	define TRACE(x...) ;
-#endif
-#define TRACE_ALWAYS(x...)	dprintf("\33[36mvmbus_device:\33[0m " x)
-#define ERROR(x...)			dprintf("\33[36mvmbus_device:\33[0m " x)
-#define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-static status_t
-vmbus_device_init(device_node* node, void** _device)
+VMBusDevice::VMBusDevice(device_node *node)
+	:
+	fNode(node),
+	fStatus(B_NO_INIT),
+	fChannelID(0),
+	fIsOpen(false),
+	fRingGPADL(0),
+	fRingBuffer(NULL),
+	fRingBufferLength(0),
+	fTXRing(NULL),
+	fTXRingLength(0),
+	fRXRing(NULL),
+	fRXRingLength(0),
+	fCallback(NULL),
+	fCallbackData(NULL),
+	fVMBus(NULL),
+	fVMBusCookie(NULL)
 {
 	CALLED();
+
+	mutex_init(&fLock, "vmbus device lock");
+
+	fStatus = gDeviceManager->get_attr_uint32(fNode, HYPERV_CHANNEL_ID_ITEM,
+		&fChannelID, false);
+	if (fStatus != B_OK) {
+		ERROR("Failed to get channel ID\n");
+		return;
+	}
+
+	device_node* parent = gDeviceManager->get_parent_node(node);
+	gDeviceManager->get_driver(parent, (driver_module_info**)&fVMBus,
+		(void**)&fVMBusCookie);
+	gDeviceManager->put_node(parent);
+
+
+}
+
+
+VMBusDevice::~VMBusDevice()
+{
+
+}
+
+
+status_t
+VMBusDevice::Open(uint32 txLength, uint32 rxLength,
+	hyperv_callback callback, void* callbackData)
+{
+	// Ring lengths must be page-aligned.
+	if (txLength == 0 || rxLength == 0 || txLength != HV_PAGE_ALIGN(txLength)
+		|| rxLength != HV_PAGE_ALIGN(rxLength))
+		return B_BAD_VALUE;
+
+	mutex_lock(&fLock);
+	if (fIsOpen) {
+		mutex_unlock(&fLock);
+		return B_BUSY;
+	}
+
+	uint32 txTotalLength = txLength + HV_PAGE_SIZE;
+	uint32 rxTotalLength = rxLength + HV_PAGE_SIZE;
+	uint32 fRingBufferLength = txTotalLength + rxTotalLength;
+
+	TRACE("Open channel %u tx length 0x%X rx length 0x%X\n", fChannelID,
+		txLength, rxLength);
+
+	// Create the GPADL used for the ring buffers
+	status_t status = fVMBus->allocate_gpadl(fVMBusCookie, fChannelID,
+		fRingBufferLength, &fRingBuffer, &fRingGPADL);
+	if (status != B_OK) {
+		ERROR("Failed to allocate GPADL while opening channel %u (%s)\n",
+			fChannelID, strerror(status));
+		mutex_unlock(&fLock);
+		return status;
+	}
+
+	fTXRing = reinterpret_cast<vmbus_ring_buffer*>(fRingBuffer);
+	fTXRingLength = txLength;
+	fRXRing = reinterpret_cast<vmbus_ring_buffer*>(static_cast<uint8*>(fRingBuffer)
+		+ txTotalLength);
+	fRXRingLength = rxLength;
+
+	fCallback = callback;
+	fCallbackData = callbackData;
+
+	// Open the VMBus channel
+	status = fVMBus->open_channel(fVMBusCookie, fChannelID, fRingGPADL,
+		txTotalLength >> HV_PAGE_SHIFT);
+	if (status != B_OK) {
+		ERROR("Failed to open channel %u (%s)\n",
+			fChannelID, strerror(status));
+		mutex_unlock(&fLock);
+		return status;
+	}
+
+	// Channel is now open, ready to go
+	fIsOpen = true;
+	mutex_unlock(&fLock);
 
 	return B_OK;
 }
 
 
-static void
-vmbus_device_uninit(void* _device)
+status_t
+VMBusDevice::Close()
 {
-	CALLED();
+	return B_OK;
 }
-
-
-static void
-vmbus_device_removed(void* _device)
-{
-	CALLED();
-}
-
-
-static status_t
-std_ops(int32 op, ...)
-{
-	switch (op) {
-		case B_MODULE_INIT:
-		case B_MODULE_UNINIT:
-			return B_OK;
-
-		default:
-			break;
-	}
-
-	return B_ERROR;
-}
-
-
-hyperv_device_interface gHyperVDeviceModule = {
-	{
-		{
-			HYPERV_DEVICE_MODULE_NAME,
-			0,
-			std_ops
-		},
-		NULL,	// supported devices
-		NULL,	// register node
-		vmbus_device_init,
-		vmbus_device_uninit,
-		NULL,	// register child devices
-		NULL,	// rescan
-		vmbus_device_removed
-	}
-};

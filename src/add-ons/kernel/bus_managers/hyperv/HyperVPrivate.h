@@ -11,12 +11,17 @@
 #include <ACPI.h>
 #include <dpc.h>
 
+#include <hyperv.h>
+
 extern device_manager_info* gDeviceManager;
 extern acpi_module_info* gACPI;
 extern dpc_module_info* gDPC;
+
+extern hyperv_bus_interface gVMBusModule;
+extern hyperv_device_interface gVMBusDeviceModule;
 
 phys_addr_t hyperv_mem_vtophys(void* vaddr);
 
 #define HYPERV_VTOPHYS_ERROR	(~0ULL)
 
-#endif /* _HYPERV_PRIVATE_H_ */
+#endif // _HYPERV_PRIVATE_H_

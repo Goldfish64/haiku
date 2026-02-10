@@ -2,8 +2,8 @@
  * Copyright 2026 John Davis
  * All rights reserved. Distributed under the terms of the MIT License.
  */
-#ifndef HYPERV_REG_H
-#define HYPERV_REG_H
+#ifndef _HYPERV_REG_H_
+#define _HYPERV_REG_H_
 
 // Page sizes for Hyper-V are 4KB on all platforms
 #define HV_PAGE_SIZE			4096
@@ -219,4 +219,4 @@ typedef struct { // All interrupts event flags
 	| IA32_MSR_HV_GUEST_OS_ID_OSID_HAIKU	\
 	| IA32_MSR_HV_GUEST_OS_ID_OSTYPE_HAIKU)
 
-#endif
+#endif // _HYPERV_REG_H_

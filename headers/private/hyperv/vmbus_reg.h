@@ -2,8 +2,8 @@
  * Copyright 2026 John Davis
  * All rights reserved. Distributed under the terms of the MIT License.
  */
-#ifndef VMBUS_REG_H
-#define VMBUS_REG_H
+#ifndef _VMBUS_REG_H_
+#define _VMBUS_REG_H_
 
 // HID of VMBus ACPI device
 // This is normally just "VMBus", but acpica seems to need all caps
@@ -266,4 +266,4 @@ typedef union { // VMBus combined message
 	vmbus_msg_disconnect				disconnect;
 } _PACKED vmbus_msg;
 
-#endif
+#endif // _VMBUS_REG_H_

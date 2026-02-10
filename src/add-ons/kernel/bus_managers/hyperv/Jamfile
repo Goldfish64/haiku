@@ -1,5 +1,7 @@
 SubDir HAIKU_TOP src add-ons kernel bus_managers hyperv ;
 
+SubDirC++Flags -fno-rtti ;
+
 UsePrivateKernelHeaders ;
 UsePrivateHeaders hyperv ;
 
@@ -9,6 +11,10 @@ SubDirHdrs $(HAIKU_TOP) src add-ons kernel bus_managers acpi acpica include plat
 
 KernelAddon hyperv :
 	HyperVModule.cpp
+
 	VMBus.cpp
+	VMBusModule.cpp
+
 	VMBusDevice.cpp
+	VMBusDeviceModule.cpp
 	;

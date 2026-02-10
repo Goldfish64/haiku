@@ -2,8 +2,8 @@
  * Copyright 2026 John Davis
  * All rights reserved. Distributed under the terms of the MIT License.
  */
-#ifndef VMBUS_PRIVATE_H
-#define VMBUS_PRIVATE_H
+#ifndef _VMBUS_PRIVATE_H_
+#define _VMBUS_PRIVATE_H_
 
 #include <new>
 #include <stdio.h>
@@ -27,9 +27,17 @@
 
 #include "HyperVPrivate.h"
 
-class VMBus;
+#define TRACE_VMBUS
+#ifdef TRACE_VMBUS
+#	define TRACE(x...) dprintf("\33[35mvmbus:\33[0m " x)
+#else
+#	define TRACE(x...) ;
+#endif
+#define TRACE_ALWAYS(x...)	dprintf("\33[35mvmbus:\33[0m " x)
+#define ERROR(x...)			dprintf("\33[35mvmbus:\33[0m " x)
+#define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-extern hyperv_bus_interface gVMBusModule;
+class VMBus;
 
 typedef struct {
 	VMBus*							vmbus;
@@ -74,7 +82,6 @@ public:
 			status_t				FreeGPADL(uint32 channel, uint32 gpadl);
 
 private:
-			status_t				_AllocData();
 			status_t				_InitHypercalls();
 			uint16					_HypercallPostMessage(phys_addr_t physAddr);
 			uint16					_HypercallSignalEvent(uint32 connId);
@@ -134,4 +141,4 @@ private:
 			thread_id				fChannelThread;
 };
 
-#endif
+#endif // VMBUS_PRIVATE_H
