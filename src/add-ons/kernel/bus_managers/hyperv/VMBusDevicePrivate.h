@@ -35,13 +35,19 @@ public:
 			status_t				InitCheck() const { return fStatus; }
 
 			status_t				Open(uint32 txLength, uint32 rxLength,
-										hyperv_callback callback, void* callbackData);
+										hyperv_device_callback callback, void* callbackData);
 			status_t				Close();
+
+private:
+	static	void					_CallbackHandler(void* arg);
+	static	void					_DPCHandler(void* arg);
+
 private:
 			device_node* 			fNode;
 			status_t				fStatus;
 			uint32					fChannelID;
 			mutex					fLock;
+			void*					fDPCHandle;
 			bool					fIsOpen;
 
 			uint32					fRingGPADL;
@@ -52,7 +58,7 @@ private:
 			vmbus_ring_buffer*		fRXRing;
 			uint32					fRXRingLength;
 
-			hyperv_callback			fCallback;
+			hyperv_device_callback	fCallback;
 			void*					fCallbackData;
 
 

@@ -49,7 +49,7 @@ vmbus_device_removed(void* _device)
 
 static status_t
 vmbus_open_channel(hyperv_device cookie, uint32 txLength, uint32 rxLength,
-	hyperv_callback callback, void* callbackData)
+	hyperv_device_callback callback, void* callbackData)
 {
 	CALLED();
 	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(cookie);

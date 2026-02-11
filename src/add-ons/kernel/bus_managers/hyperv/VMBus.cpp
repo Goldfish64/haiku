@@ -51,6 +51,7 @@ VMBus::VMBus(device_node *node)
 	fNode(node),
 	fStatus(B_NO_INIT),
 	fMessageDPCHandle(NULL),
+	fEventFlagsHandler(&VMBus::_InterruptEventFlagsNull),
 	fCPUCount(0),
 	fCPUData(NULL),
 	fVersion(0),
@@ -58,13 +59,16 @@ VMBus::VMBus(device_node *node)
 	fHypercallPage(NULL),
 	fHyperCallPhysAddr(0),
 	fCurrentGPADLHandle(VMBUS_GPADL_NULL),
-	fChannelSem(0),
-	fChannelThread(0)
+	fMaxChannelsCount(0),
+	fHighestChannelID(0),
+	fChannels(NULL),
+	fChannelQueueSem(0),
+	fChannelQueueThread(0)
 {
 	CALLED();
 
 	// Allocate an executable page for hypercall usage, assuming its page-aligned here
-	fHypercallPage = malloc(B_PAGE_SIZE);
+	fHypercallPage = malloc(HV_PAGE_SIZE);
 	if (fHypercallPage == NULL) {
 		fStatus = B_NO_MEMORY;
 		return;
@@ -75,6 +79,7 @@ VMBus::VMBus(device_node *node)
 	if (fStatus != B_OK) {
 		return;
 	}
+	fHyperCallPhysAddr = entry.address;
 
 	// Allocate per-CPU state
 	fCPUCount = smp_get_num_cpus();
@@ -90,8 +95,7 @@ VMBus::VMBus(device_node *node)
 
 		fCPUData[i].messages = (volatile hv_message_page*)
 			malloc(sizeof(hv_message_page));
-		fCPUData[i].event_flags = (volatile hv_event_flags_page*)
-			malloc(sizeof(hv_event_flags_page));
+		fCPUData[i].event_flags = new(std::nothrow) hv_event_flags_page;
 		if (fCPUData[i].messages == NULL || fCPUData[i].event_flags == NULL) {
 			fStatus = B_NO_MEMORY;
 			return;
@@ -102,17 +106,18 @@ VMBus::VMBus(device_node *node)
 	}
 
 	// Allocate VMBus event flags and monitor pages
-	fEventFlagsPage = malloc(HV_PAGE_SIZE);
+	fEventFlagsPage = new(std::nothrow) vmbus_event_flags;
 	fMonitorPage1 = malloc(HV_PAGE_SIZE);
 	fMonitorPage2 = malloc(HV_PAGE_SIZE);
 	if (fEventFlagsPage == NULL || fMonitorPage1 == NULL || fMonitorPage2 == NULL) {
 		fStatus = B_NO_MEMORY;
 		return;
 	}
-	
-	mutex_init(&fFreeMsgLock, "vmbus free msg lock");
-	mutex_init(&fActiveMsgLock, "vmbus active msg lock");
-	mutex_init(&fChannelLock, "vmbus chn lock");
+
+	mutex_init(&fFreeMsgLock, "vmbus freemsg lock");
+	mutex_init(&fActiveMsgLock, "vmbus activemsg lock");
+	B_INITIALIZE_SPINLOCK(&fChannelsSpinlock);
+	mutex_init(&fChannelQueueLock, "vmbus chnqueue lock");
 
 	// Create VMBus management message queue
 	fStatus = gDPC->new_dpc_queue(&fMessageDPCHandle, "hyperv vmbus mgmt msg",
@@ -121,19 +126,19 @@ VMBus::VMBus(device_node *node)
 		return;
 
 	// Create and start channel management thread
-	fChannelSem = create_sem(0, "vmbus channel sem");
-	if (fChannelSem < B_OK) {
-		fStatus = fChannelSem;
+	fChannelQueueSem = create_sem(0, "vmbus channel sem");
+	if (fChannelQueueSem < B_OK) {
+		fStatus = fChannelQueueSem;
 		return;
 	}
 
-	fChannelThread = spawn_kernel_thread(_ChannelThreadHandler,
-		"vmbus channel mgmt", B_NORMAL_PRIORITY, this);
-	if (fChannelThread < B_OK) {
-		fStatus = fChannelThread;
+	fChannelQueueThread = spawn_kernel_thread(_ChannelQueueThreadHandler,
+		"vmbus channelqueue", B_NORMAL_PRIORITY, this);
+	if (fChannelQueueThread < B_OK) {
+		fStatus = fChannelQueueThread;
 		return;
 	}
-	resume_thread(fChannelThread);
+	resume_thread(fChannelQueueThread);
 
 	// Initialize and enable hypercalls
 	fStatus = _InitHypercalls();
@@ -167,11 +172,36 @@ VMBus::~VMBus()
 
 
 status_t
-VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset)
+VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset,
+	hyperv_bus_callback callback, void* callbackData)
 {
+	// Channel must be valid
+	if (channel >= fMaxChannelsCount)
+		return B_BAD_VALUE;
+
+	cpu_status state = disable_interrupts();
+	acquire_spinlock(&fChannelsSpinlock);
+	VMBusChannelInfo* channelInfo = fChannels[channel];
+	release_spinlock(&fChannelsSpinlock);
+	restore_interrupts(state);
+
+	if (channelInfo == NULL)
+		return B_NAME_NOT_FOUND;
+
+	status_t status = mutex_lock(&channelInfo->lock);
+	if (status != B_OK)
+		return status;
+
+	// Store the callback
+	channelInfo->callback = callback;
+	channelInfo->callback_data = callbackData;
+
+	// Create the open channel message
 	VMBusMsgInfo* msgInfo = _AllocMsgInfo();
-	if (msgInfo == NULL)
+	if (msgInfo == NULL) {
+		mutex_unlock(&channelInfo->lock);
 		return B_NO_MEMORY;
+	}
 
 	vmbus_msg_open_channel* message = &msgInfo->message->open_channel;
 	message->header.type = VMBUS_MSGTYPE_OPEN_CHANNEL;
@@ -188,10 +218,11 @@ VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset)
 
 	// Send open channel message to Hyper-V
 	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_OPEN_CHANNEL_RESPONSE, channel);
-	status_t status = _SendMessage(msgInfo);
+	status = _SendMessage(msgInfo);
 	if (status != B_OK) {
 		_RemoveActiveMsgInfo(msgInfo);
 		_ReturnFreeMsgInfo(msgInfo);
+		mutex_unlock(&channelInfo->lock);
 		return status;
 	}
 
@@ -200,6 +231,7 @@ VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset)
 	if (status != B_OK) {
 		_RemoveActiveMsgInfo(msgInfo);
 		_ReturnFreeMsgInfo(msgInfo);
+		mutex_unlock(&channelInfo->lock);
 		return status;
 	}
 
@@ -209,6 +241,8 @@ VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset)
 	_ReturnFreeMsgInfo(msgInfo);
 
 	TRACE("Open channel %u status (%s)\n", channel, strerror(status));
+
+	mutex_unlock(&channelInfo->lock);
 	return status;
 }
 
@@ -231,18 +265,38 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 	if ((pageTotalCount + 1) > VMBUS_GPADL_MAX_PAGES)
 		return B_BAD_VALUE;
 
+	// Channel must be valid
+	if (channel >= fMaxChannelsCount)
+		return B_BAD_VALUE;
+
+	cpu_status state = disable_interrupts();
+	acquire_spinlock(&fChannelsSpinlock);
+	VMBusChannelInfo* channelInfo = fChannels[channel];
+	release_spinlock(&fChannelsSpinlock);
+	restore_interrupts(state);
+
+	if (channelInfo == NULL)
+		return B_NAME_NOT_FOUND;
+
+	status_t status = mutex_lock(&channelInfo->lock);
+	if (status != B_OK)
+		return status;
+
 	// Allocate contigous buffer to back the GPADL
-	void *buffer;
+	void* buffer;
 	area_id areaid = create_area("gpadl buffer", &buffer, B_ANY_KERNEL_ADDRESS,
 		length, B_CONTIGUOUS, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
-	if (areaid < B_OK)
+	if (areaid < B_OK) {
+		mutex_unlock(&channelInfo->lock);
 		return B_NO_MEMORY;
+	}
 
 	// Get physical address of the newly allocated buffer
-	physical_entry pe;
-	status_t status = get_memory_map(buffer, length, &pe, 1);
+	physical_entry entry;
+	status = get_memory_map(buffer, length, &entry, 1);
 	if (status != B_OK) {
 		delete_area(areaid);
+		mutex_unlock(&channelInfo->lock);
 		return B_ERROR;
 	}
 	memset(buffer, 0, length);
@@ -258,6 +312,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 	VMBusMsgInfo* createMsgInfo = _AllocMsgInfo();
 	if (createMsgInfo == NULL) {
 		delete_area(areaid);
+		mutex_unlock(&channelInfo->lock);
 		return B_NO_MEMORY;
 	}
 
@@ -279,7 +334,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 	createMessage->ranges[0].offset = 0;
 	createMessage->ranges[0].length = length;
 
-	uint64 currentPageNum = (uint64)(pe.address >> HV_PAGE_SHIFT);
+	uint64 currentPageNum = (uint64)(entry.address >> HV_PAGE_SHIFT);
 	for (uint32 i = 0; i < pageMessageCount; i++) {
 		createMessage->ranges[0].page_nums[i] = currentPageNum++;
 	}
@@ -291,6 +346,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 		_RemoveActiveMsgInfo(createMsgInfo);
 		_ReturnFreeMsgInfo(createMsgInfo);
 		delete_area(areaid);
+		mutex_unlock(&channelInfo->lock);
 		return status;
 	}
 
@@ -301,6 +357,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 			_RemoveActiveMsgInfo(createMsgInfo);
 			_ReturnFreeMsgInfo(createMsgInfo);
 			delete_area(areaid);
+			mutex_unlock(&channelInfo->lock);
 			return B_NO_MEMORY;
 		}
 
@@ -331,6 +388,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 				_RemoveActiveMsgInfo(createMsgInfo);
 				_ReturnFreeMsgInfo(createMsgInfo);
 				delete_area(areaid);
+				mutex_unlock(&channelInfo->lock);
 				return status;
 			}
 
@@ -346,6 +404,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 		_RemoveActiveMsgInfo(createMsgInfo);
 		_ReturnFreeMsgInfo(createMsgInfo);
 		delete_area(areaid);
+		mutex_unlock(&channelInfo->lock);
 		return status;
 	}
 
@@ -353,13 +412,29 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 	_ReturnFreeMsgInfo(createMsgInfo);
 	if (status != B_OK) {
 		delete_area(areaid);
+		mutex_unlock(&channelInfo->lock);
 		return status;
 	}
 
 	TRACE("Created GPADL %u for channel %u\n", gpadl, channel);
 
+	// Store the GPADL buffer info for later freeing
+	VMBusGPADLInfo* gpadlInfo = new(std::nothrow) VMBusGPADLInfo;
+	if (gpadlInfo == NULL) {
+		delete_area(areaid);
+		mutex_unlock(&channelInfo->lock);
+		return B_NO_MEMORY;
+	}
+
+	gpadlInfo->gpadl_id = gpadl;
+	gpadlInfo->length = length;
+	gpadlInfo->areaid = areaid;
+	channelInfo->gpadls.Add(gpadlInfo);
+
 	*_buffer = buffer;
 	*_gpadl = gpadl;
+
+	mutex_unlock(&channelInfo->lock);
 	return B_OK;
 }
 
@@ -523,14 +598,58 @@ int32
 VMBus::_Interrupt()
 {
 	int32 cpu = smp_get_current_cpu();
-	volatile hv_message_page* message = fCPUData[cpu].messages;
+
+	// Check event flags first
+	(this->*fEventFlagsHandler)(cpu);
 
 	// Handoff new VMBus management message to DPC
+	volatile hv_message_page* message = fCPUData[cpu].messages;
 	if (message->interrupts[VMBUS_SINT_MESSAGE].message_type != HYPERV_MSGTYPE_NONE) {
 		gDPC->queue_dpc(fMessageDPCHandle, _MessageDPCHandler, &fCPUData[cpu]);
 	}
 
 	return B_HANDLED_INTERRUPT;
+}
+
+
+void
+VMBus::_InterruptEventFlags(int32 cpu)
+{
+	// Check the SynIC event flags directly
+	acquire_spinlock(&fChannelsSpinlock);
+
+	release_spinlock(&fChannelsSpinlock);
+}
+
+
+void
+VMBus::_InterruptEventFlagsLegacy(int32 cpu)
+{
+	// Check the SynIC event flags first, then the VMBus RX event flags
+	hv_event_flags_page* eventFlags = fCPUData[cpu].event_flags;
+	if (atomic_get_and_set(eventFlags->interrupts[VMBUS_SINT_MESSAGE].iflags32, 0) == 0)
+		return;
+
+	acquire_spinlock(&fChannelsSpinlock);
+
+	int32* chanRXFlags = fEventFlagsPage->rx_event_flags.iflags32;
+	uint32 flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags, 0));
+	for (uint32 i = 1; i <= fHighestChannelID; i++) {
+		if ((i % 32) == 0)
+			flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags++, 0));
+			
+		if (flags & 0x1)
+			fChannels[i]->callback(fChannels[i]->callback_data);
+		flags >>= 1;
+	}
+
+	release_spinlock(&fChannelsSpinlock);
+}
+
+
+void
+VMBus::_InterruptEventFlagsNull(int32 cpu)
+{
 }
 
 
@@ -564,22 +683,29 @@ VMBus::_MessageDPC(int32_t cpu)
 	}
 
 	if (message->header.type == VMBUS_MSGTYPE_CHANNEL_OFFER) {
-		VMBusChannelInfo* channelInfo = new(std::nothrow) VMBusChannelInfo;
-		if (channelInfo != NULL) {
-			vmbus_msg_channel_offer* offerMessage = &message->channel_offer;
+		vmbus_msg_channel_offer* offerMessage = &message->channel_offer;
 
-			channelInfo->vmbus = this;
-			channelInfo->channel_id = offerMessage->channel_id;
-			channelInfo->type_id = offerMessage->type_id;
-			channelInfo->instance_id = offerMessage->instance_id;
-			channelInfo->node = NULL;
+		if (offerMessage->channel_id < fMaxChannelsCount) {
+			VMBusChannelInfo* channelInfo = new(std::nothrow) VMBusChannelInfo;
+			if (channelInfo != NULL) {
+				channelInfo->channel_id = offerMessage->channel_id;
+				channelInfo->type_id = offerMessage->type_id;
+				channelInfo->instance_id = offerMessage->instance_id;
 
-			// Add new channel to list and signal the channel handler thread
-			mutex_lock(&fChannelLock);
-			fChannelOfferList.Add(channelInfo, true);
-			mutex_unlock(&fChannelLock);
+				channelInfo->vmbus = this;
+				mutex_init(&channelInfo->lock, "vmbus chn lock");
+				new (&channelInfo->gpadls) VMBusGPADLInfoList;
+				channelInfo->node = NULL;
 
-			release_sem_etc(fChannelSem, 1, B_DO_NOT_RESCHEDULE);
+				// Add new channel to list and signal the channel handler thread
+				mutex_lock(&fChannelQueueLock);
+				fChannelOfferList.Add(channelInfo);
+				mutex_unlock(&fChannelQueueLock);
+
+				release_sem_etc(fChannelQueueSem, 1, B_DO_NOT_RESCHEDULE);
+			}
+		} else {
+			TRACE("Invalid VMBus channel ID %u received!\n", offerMessage->channel_id);
 		}
 	} else if (message->header.type == VMBUS_MSGTYPE_RESCIND_CHANNEL_OFFER) {
 		// TODO: Implement channel removals
@@ -777,7 +903,7 @@ VMBus::_ConnectVersion(uint32 version)
 
 	message->version = version;
 	message->target_cpu = 0;
-	message->event_flags_physaddr = hyperv_mem_vtophys(fEventFlagsPage);
+	message->event_flags_physaddr = hyperv_mem_vtophys((void*)fEventFlagsPage);
 	message->monitor1_physaddr = hyperv_mem_vtophys(fMonitorPage1);
 	message->monitor2_physaddr = hyperv_mem_vtophys(fMonitorPage2);
 
@@ -830,6 +956,20 @@ VMBus::_Connect()
 
 	TRACE("Connected to VMBus version %u.%u conn id %u\n", GET_VMBUS_VERSION_MAJOR(fVersion),
 		GET_VMBUS_VERSION_MINOR(fVersion), fConnectionId);
+
+	if (fVersion == VMBUS_VERSION_WS2008 || fVersion == VMBUS_VERSION_WS2008R2) {
+		fMaxChannelsCount = VMBUS_MAX_CHANNELS_LEGACY;
+		fEventFlagsHandler = &VMBus::_InterruptEventFlagsLegacy;
+	} else {
+		fMaxChannelsCount = VMBUS_MAX_CHANNELS;
+		fEventFlagsHandler = &VMBus::_InterruptEventFlags;
+	}
+
+	// Allocate array for channel data
+	fChannels = new(std::nothrow) VMBusChannelInfo*[fMaxChannelsCount];
+	if (fChannels == NULL)
+		return B_NO_MEMORY;
+
 	return B_OK;
 }
 
@@ -855,29 +995,40 @@ VMBus::_RequestChannels()
 
 
 /*static*/ status_t
-VMBus::_ChannelThreadHandler(void *arg)
+VMBus::_ChannelQueueThreadHandler(void *arg)
 {
 	VMBus* vmbus = reinterpret_cast<VMBus*>(arg);
-	return vmbus->_ChannelThread();
+	return vmbus->_ChannelQueueThread();
 }
 
 
 status_t
-VMBus::_ChannelThread()
+VMBus::_ChannelQueueThread()
 {
-	while (acquire_sem(fChannelSem) == B_OK) {
-		mutex_lock(&fChannelLock);
+	while (acquire_sem(fChannelQueueSem) == B_OK) {
 
+		// Fetch the next added and/or removed channels
+		mutex_lock(&fChannelQueueLock);
 		VMBusChannelInfo* newChannel = fChannelOfferList.RemoveHead();
-		if (newChannel != NULL)
-			fChannelRegisteredList.Add(newChannel, true);
-
 		VMBusChannelInfo* oldChannel = fChannelRescindList.RemoveHead();
-		if (oldChannel)
-			fChannelRegisteredList.Remove(oldChannel);
+		mutex_unlock(&fChannelQueueLock);
 
-		mutex_unlock(&fChannelLock);
+		// Add and/or remove the channels from the active list
+		cpu_status state = disable_interrupts();
+		acquire_spinlock(&fChannelsSpinlock);
 
+		if (newChannel != NULL) {
+			fChannels[newChannel->channel_id] = newChannel;
+			if (fHighestChannelID < newChannel->channel_id)
+				fHighestChannelID = newChannel->channel_id;
+		}
+		if (oldChannel != NULL)
+			fChannels[oldChannel->channel_id] = NULL;
+
+		release_spinlock(&fChannelsSpinlock);
+		restore_interrupts(state);
+
+		// Handle new channel registration
 		if (newChannel != NULL) {
 			char typeStr[37];
 			char instanceStr[37];
@@ -916,6 +1067,15 @@ VMBus::_ChannelThread()
 			// Publish child device node for the VMBus channel
 			gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME,
 				attributes, NULL, &newChannel->node);
+		}
+
+		// Handle old channel deregistration
+		if (oldChannel != NULL) {
+			// Acquire and destroy the lock
+			mutex_lock(&oldChannel->lock);
+			mutex_destroy(&oldChannel->lock);
+
+			// TODO
 		}
 	}
 

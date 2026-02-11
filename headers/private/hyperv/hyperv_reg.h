@@ -192,7 +192,10 @@ typedef struct { // All interrupts message data
 #define HV_EVENT_FLAGS_COUNT	(HV_EVENT_FLAGS_SIZE * 8)
 
 typedef struct { // Per-interrupt event flags
-	uint8	flags[HV_EVENT_FLAGS_SIZE];
+	union {
+		uint8	flags[HV_EVENT_FLAGS_SIZE];
+		int32	iflags32[HV_EVENT_FLAGS_SIZE / sizeof(int32)];
+	};
 } _PACKED hv_event_flags;
 
 typedef struct { // All interrupts event flags

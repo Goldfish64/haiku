@@ -43,7 +43,7 @@ typedef struct {
 	VMBus*							vmbus;
 	int32_t							cpu;
 	volatile hv_message_page*		messages;
-	volatile hv_event_flags_page*	event_flags;
+	hv_event_flags_page*			event_flags;
 } VMBusPerCPUInfo;
 
  // VMBus message info used for transactions
@@ -58,16 +58,30 @@ struct VMBusMsgInfo : DoublyLinkedListLinkImpl<VMBusMsgInfo> {
 };
 typedef DoublyLinkedList<VMBusMsgInfo> VMBusMsgInfoList;
 
+// Channel GPADL list
+struct VMBusGPADLInfo : DoublyLinkedListLinkImpl<VMBusGPADLInfo> {
+	uint32	gpadl_id;
+	uint32	length;
+	area_id areaid;
+};
+typedef DoublyLinkedList<VMBusGPADLInfo> VMBusGPADLInfoList;
+
 // Active channel info
 struct VMBusChannelInfo : DoublyLinkedListLinkImpl<VMBusChannelInfo> {
-	VMBus*			vmbus;
-	uint32_t		channel_id;
-	vmbus_guid_t	type_id;
-	vmbus_guid_t	instance_id;
+	uint32_t			channel_id;
+	vmbus_guid_t		type_id;
+	vmbus_guid_t		instance_id;
 
-	device_node*	node;
+	VMBus*				vmbus;
+	mutex				lock;
+	device_node*		node;
+	VMBusGPADLInfoList	gpadls;
+	hyperv_bus_callback	callback;
+	void*				callback_data;
 };
 typedef DoublyLinkedList<VMBusChannelInfo> VMBusChannelInfoList;
+
+typedef void (VMBus::*VMBusEventFlagsHandler)(int32 cpu);
 
 class VMBus {
 public:
@@ -75,7 +89,8 @@ public:
 									~VMBus();
 			status_t				InitCheck() const { return fStatus; }
 
-			status_t				OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset);
+			status_t				OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset,
+										hyperv_bus_callback callback, void* callbackData);
 			status_t				CloseChannel(uint32 channel);
 			status_t				AllocateGPADL(uint32 channel, uint32 length, void** _buffer,
 										uint32* _gpadl);
@@ -90,6 +105,9 @@ private:
 	static	acpi_status				_InterruptACPICallback(ACPI_RESOURCE* res, void* context);
 	static	int32					_InterruptHandler(void *data);
 			int32					_Interrupt();
+			void					_InterruptEventFlags(int32 cpu);
+			void					_InterruptEventFlagsLegacy(int32 cpu);
+			void					_InterruptEventFlagsNull(int32 cpu);
 	static	void					_MessageDPCHandler(void *arg);
 			void					_MessageDPC(int32_t cpu);
 
@@ -107,22 +125,24 @@ private:
 			status_t				_ConnectVersion(uint32 version);
 			status_t				_Connect();
 			status_t				_RequestChannels();
-	static	status_t				_ChannelThreadHandler(void *arg);
-			status_t				_ChannelThread();
+	static	status_t				_ChannelQueueThreadHandler(void *arg);
+			status_t				_ChannelQueueThread();
 	inline	uint32					_GetGPADLHandle();
 
 private:
 			device_node* 			fNode;
 			status_t				fStatus;
 			void*					fMessageDPCHandle;
+			VMBusEventFlagsHandler	fEventFlagsHandler;
 
 			int32					fCPUCount;
 			VMBusPerCPUInfo*		fCPUData;
-			void*					fEventFlagsPage;
-			void*					fMonitorPage1;
-			void*					fMonitorPage2;
 			uint32					fVersion;
 			uint32					fConnectionId;
+
+			vmbus_event_flags*		fEventFlagsPage;
+			void*					fMonitorPage1;
+			void*					fMonitorPage2;
 
 			void*					fHypercallPage;
 			phys_addr_t				fHyperCallPhysAddr;
@@ -133,12 +153,16 @@ private:
 
 			int32					fCurrentGPADLHandle;
 
+			uint32					fMaxChannelsCount;
+			uint32					fHighestChannelID;
+			VMBusChannelInfo**		fChannels;
+			spinlock				fChannelsSpinlock;
+
 			VMBusChannelInfoList	fChannelOfferList;
 			VMBusChannelInfoList	fChannelRescindList;
-			VMBusChannelInfoList	fChannelRegisteredList;
-			mutex					fChannelLock;
-			sem_id					fChannelSem;
-			thread_id				fChannelThread;
+			mutex					fChannelQueueLock;
+			sem_id					fChannelQueueSem;
+			thread_id				fChannelQueueThread;
 };
 
 #endif // VMBUS_PRIVATE_H

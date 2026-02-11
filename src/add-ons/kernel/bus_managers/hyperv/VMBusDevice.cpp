@@ -13,6 +13,7 @@ VMBusDevice::VMBusDevice(device_node *node)
 	fNode(node),
 	fStatus(B_NO_INIT),
 	fChannelID(0),
+	fDPCHandle(NULL),
 	fIsOpen(false),
 	fRingGPADL(0),
 	fRingBuffer(NULL),
@@ -54,14 +55,17 @@ VMBusDevice::~VMBusDevice()
 
 status_t
 VMBusDevice::Open(uint32 txLength, uint32 rxLength,
-	hyperv_callback callback, void* callbackData)
+	hyperv_device_callback callback, void* callbackData)
 {
 	// Ring lengths must be page-aligned.
 	if (txLength == 0 || rxLength == 0 || txLength != HV_PAGE_ALIGN(txLength)
 		|| rxLength != HV_PAGE_ALIGN(rxLength))
 		return B_BAD_VALUE;
 
-	mutex_lock(&fLock);
+	status_t status = mutex_lock(&fLock);
+	if (status != B_OK)
+		return status;
+
 	if (fIsOpen) {
 		mutex_unlock(&fLock);
 		return B_BUSY;
@@ -75,7 +79,7 @@ VMBusDevice::Open(uint32 txLength, uint32 rxLength,
 		txLength, rxLength);
 
 	// Create the GPADL used for the ring buffers
-	status_t status = fVMBus->allocate_gpadl(fVMBusCookie, fChannelID,
+	status = fVMBus->allocate_gpadl(fVMBusCookie, fChannelID,
 		fRingBufferLength, &fRingBuffer, &fRingGPADL);
 	if (status != B_OK) {
 		ERROR("Failed to allocate GPADL while opening channel %u (%s)\n",
@@ -92,10 +96,21 @@ VMBusDevice::Open(uint32 txLength, uint32 rxLength,
 
 	fCallback = callback;
 	fCallbackData = callbackData;
+	if (fCallback != NULL) {
+		// Create callback DPC
+		status = gDPC->new_dpc_queue(&fDPCHandle, "hyperv vmbusdev callback",
+			B_NORMAL_PRIORITY);
+		if (status != B_OK) {
+			mutex_unlock(&fLock);
+			return status;
+		}
+	}
 
 	// Open the VMBus channel
 	status = fVMBus->open_channel(fVMBusCookie, fChannelID, fRingGPADL,
-		txTotalLength >> HV_PAGE_SHIFT);
+		txTotalLength >> HV_PAGE_SHIFT,
+		(hyperv_device_callback)((fCallback != NULL) ? _CallbackHandler : NULL),
+		(fCallback != NULL) ? this : NULL);
 	if (status != B_OK) {
 		ERROR("Failed to open channel %u (%s)\n",
 			fChannelID, strerror(status));
@@ -115,4 +130,21 @@ status_t
 VMBusDevice::Close()
 {
 	return B_OK;
+}
+
+
+/*static*/ void
+VMBusDevice::_CallbackHandler(void* arg)
+{
+	VMBusDevice* vmbusDevice = reinterpret_cast<VMBusDevice*>(arg);
+	gDPC->queue_dpc(vmbusDevice->fDPCHandle, _DPCHandler, arg);
+}
+
+
+/*static*/ void
+VMBusDevice::_DPCHandler(void* arg)
+{
+	TRACE("CALLBACK\n");
+	VMBusDevice* vmbusDevice = reinterpret_cast<VMBusDevice*>(arg);
+	vmbusDevice->fCallback(vmbusDevice->fCallbackData);
 }

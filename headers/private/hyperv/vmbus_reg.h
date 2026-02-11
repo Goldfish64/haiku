@@ -19,6 +19,11 @@
 // Fixed connection ID for events
 #define VMBUS_CONNID_EVENTS			2
 
+// Max channels is 2048 on Server 2012 and newer
+// Server 2008 and 2008 R2 have a maximum of 256
+#define VMBUS_MAX_CHANNELS			HV_EVENT_FLAGS_COUNT
+#define VMBUS_MAX_CHANNELS_LEGACY	256
+
 #define MAKE_VMBUS_VERSION(major, minor)	((((major) << 16) & 0xFFFF0000) | ((minor) & 0x0000FFFF))
 #define GET_VMBUS_VERSION_MAJOR(version)	(((version) >> 16) & 0xFFFF)
 #define GET_VMBUS_VERSION_MINOR(version)	((version) & 0xFFFF)
@@ -70,6 +75,11 @@ typedef struct { // VMBus GPADL range descriptor
 
 #define VMBUS_GPADL_NULL		0
 #define VMBUS_GPADL_MAX_PAGES	8192
+
+typedef struct { // VMBus event flags
+	hv_event_flags	rx_event_flags;
+	hv_event_flags	tx_event_flags;
+} _PACKED vmbus_event_flags;
 
 enum { // VMBus message type
 	VMBUS_MSGTYPE_INVALID					= 0,

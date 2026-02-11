@@ -39,14 +39,15 @@
 typedef void* hyperv_bus;
 typedef void* hyperv_device;
 
-typedef void (*hyperv_callback)(void* data);
+typedef void (*hyperv_bus_callback)(void* data);
+typedef void (*hyperv_device_callback)(void* data);
 
 // Interface between the VMBus bus device driver, and the VMBus bus manager
 typedef struct hyperv_bus_interface {
 	driver_module_info info;
 
 	status_t (*open_channel)(hyperv_bus cookie, uint32 channel, uint32 gpadl,
-		uint32 rxPageOffset);
+		uint32 rxPageOffset, hyperv_bus_callback callback, void* callbackData);
 	status_t (*close_channel)(hyperv_bus cookie, uint32 channel);
 	status_t (*allocate_gpadl)(hyperv_bus cookie, uint32 channel, uint32 length,
 		void** _buffer, uint32* _gpadl);
@@ -58,7 +59,7 @@ typedef struct hyperv_device_interface {
 	driver_module_info info;
 
 	status_t (*open)(hyperv_device cookie, uint32 txLength, uint32 rxLength,
-		hyperv_callback callback, void* callbackData);
+		hyperv_device_callback callback, void* callbackData);
 	status_t (*close)(hyperv_device cookie);
 } hyperv_device_interface;
 
