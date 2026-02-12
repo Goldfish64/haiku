@@ -52,6 +52,7 @@ typedef struct hyperv_bus_interface {
 	status_t (*allocate_gpadl)(hyperv_bus cookie, uint32 channel, uint32 length,
 		void** _buffer, uint32* _gpadl);
 	status_t (*free_gpadl)(hyperv_bus cookie, uint32 channel, uint32 gpadl);
+	status_t (*signal_channel)(hyperv_bus cookie, uint32 channel);
 } hyperv_bus_interface;
 
 // Interface between the VMBus device driver, and the VMBus device bus manager

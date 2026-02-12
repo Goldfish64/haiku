@@ -71,6 +71,8 @@ struct VMBusChannelInfo : DoublyLinkedListLinkImpl<VMBusChannelInfo> {
 	uint32_t			channel_id;
 	vmbus_guid_t		type_id;
 	vmbus_guid_t		instance_id;
+	bool				dedicated_int;
+	uint32_t			connection_id;
 
 	VMBus*				vmbus;
 	mutex				lock;
@@ -95,6 +97,7 @@ public:
 			status_t				AllocateGPADL(uint32 channel, uint32 length, void** _buffer,
 										uint32* _gpadl);
 			status_t				FreeGPADL(uint32 channel, uint32 gpadl);
+			status_t				SignalChannel(uint32 channel);
 
 private:
 			status_t				_InitHypercalls();

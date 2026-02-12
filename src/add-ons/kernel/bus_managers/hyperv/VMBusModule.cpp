@@ -156,6 +156,14 @@ vmbus_free_gpadl(hyperv_bus cookie, uint32 channel, uint32 gpadl)
 
 
 static status_t
+vmbus_signal_channel(hyperv_bus cookie, uint32 channel)
+{
+	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
+	return vmbus->SignalChannel(channel);
+}
+
+
+static status_t
 std_ops(int32 op, ...)
 {
 	switch (op) {
@@ -190,5 +198,6 @@ hyperv_bus_interface gVMBusModule = {
 	vmbus_open_channel,
 	vmbus_close_channel,
 	vmbus_allocate_gpadl,
-	vmbus_free_gpadl
+	vmbus_free_gpadl,
+	vmbus_signal_channel
 };

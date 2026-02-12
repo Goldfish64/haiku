@@ -78,7 +78,9 @@ typedef struct { // VMBus GPADL range descriptor
 
 typedef struct { // VMBus event flags
 	hv_event_flags	rx_event_flags;
+	uint8			reserved1[(HV_PAGE_SIZE / 2) - sizeof(rx_event_flags)];
 	hv_event_flags	tx_event_flags;
+	uint8			reserved2[(HV_PAGE_SIZE / 2) - sizeof(tx_event_flags)];
 } _PACKED vmbus_event_flags;
 
 enum { // VMBus message type
@@ -140,7 +142,7 @@ typedef struct { // VMBus channel offer message from Hyper-V
 	uint16	dedicated_int	: 1;
 	uint16	reserved4		: 15;
 
-	uint32	conn_id;
+	uint32	connection_id;
 } _PACKED vmbus_msg_channel_offer;
 
 typedef struct { // VMBus rescind channel offer message from Hyper-V

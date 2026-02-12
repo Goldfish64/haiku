@@ -114,6 +114,10 @@ VMBus::VMBus(device_node *node)
 		return;
 	}
 
+	memset(fEventFlagsPage, 0, sizeof(vmbus_event_flags));
+	memset(fMonitorPage1, 0, HV_PAGE_SIZE);
+	memset(fMonitorPage2, 0, HV_PAGE_SIZE);
+
 	mutex_init(&fFreeMsgLock, "vmbus freemsg lock");
 	mutex_init(&fActiveMsgLock, "vmbus activemsg lock");
 	B_INITIALIZE_SPINLOCK(&fChannelsSpinlock);
@@ -447,6 +451,31 @@ VMBus::FreeGPADL(uint32 channel, uint32 gpadl)
 
 
 status_t
+VMBus::SignalChannel(uint32 channel)
+{
+	// Channel must be valid
+	if (channel >= fMaxChannelsCount)
+		return B_BAD_VALUE;
+
+	cpu_status state = disable_interrupts();
+	acquire_spinlock(&fChannelsSpinlock);
+	bool dedicatedInterrupt = fChannels[channel]->dedicated_int;
+	uint32 connectionID = fChannels[channel]->connection_id;
+	release_spinlock(&fChannelsSpinlock);
+	restore_interrupts(state);
+
+	if (!dedicatedInterrupt) {
+		atomic_or(&fEventFlagsPage->tx_event_flags.iflags32[channel / 32], 1 << (channel & 0x1F));
+	}
+
+	uint16 hypercallStatus = _HypercallSignalEvent(connectionID);
+	if (hypercallStatus != 0)
+		TRACE("Signal hypercall failed 0x%X\n", hypercallStatus);
+	return hypercallStatus == 0 ? B_OK : B_IO_ERROR;
+}
+
+
+status_t
 VMBus::_InitHypercalls()
 {
 	// Set the guest ID
@@ -633,12 +662,12 @@ VMBus::_InterruptEventFlagsLegacy(int32 cpu)
 	acquire_spinlock(&fChannelsSpinlock);
 
 	int32* chanRXFlags = fEventFlagsPage->rx_event_flags.iflags32;
-	uint32 flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags, 0));
+	uint32 flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags, 0)) >> 1;
 	for (uint32 i = 1; i <= fHighestChannelID; i++) {
 		if ((i % 32) == 0)
 			flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags++, 0));
 			
-		if (flags & 0x1)
+		if (flags & 0x1 && fChannels[i] != NULL && fChannels[i]->callback != NULL)
 			fChannels[i]->callback(fChannels[i]->callback_data);
 		flags >>= 1;
 	}
@@ -692,10 +721,19 @@ VMBus::_MessageDPC(int32_t cpu)
 				channelInfo->type_id = offerMessage->type_id;
 				channelInfo->instance_id = offerMessage->instance_id;
 
+				if (fVersion > VMBUS_VERSION_WS2008) {
+					channelInfo->dedicated_int = offerMessage->dedicated_int != 0;
+					channelInfo->connection_id = offerMessage->connection_id;
+				} else {
+					channelInfo->dedicated_int = false;
+					channelInfo->connection_id = VMBUS_CONNID_EVENTS;
+				}
+
 				channelInfo->vmbus = this;
 				mutex_init(&channelInfo->lock, "vmbus chn lock");
 				new (&channelInfo->gpadls) VMBusGPADLInfoList;
 				channelInfo->node = NULL;
+				channelInfo->callback = NULL;
 
 				// Add new channel to list and signal the channel handler thread
 				mutex_lock(&fChannelQueueLock);
@@ -864,7 +902,7 @@ VMBus::_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize)
 	}
 
 	if (status != B_OK)
-		TRACE("Hypercall failed 0x%X\n", hypercallStatus);
+		TRACE("Post hypercall failed 0x%X\n", hypercallStatus);
 	return status;
 }
 
