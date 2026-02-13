@@ -118,12 +118,12 @@ vmbus_uninit_driver(void* driverCookie)
 
 
 static status_t
-vmbus_open_channel(hyperv_bus cookie, uint32 channel, uint32 gpadl, uint32 rxPageOffset,
+vmbus_open_channel(hyperv_bus cookie, uint32 channel, uint32 gpadl, uint32 rxOffset,
 	hyperv_bus_callback callback, void* callbackData)
 {
 	CALLED();
 	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
-	return vmbus->OpenChannel(channel, gpadl, rxPageOffset, callback, callbackData);
+	return vmbus->OpenChannel(channel, gpadl, rxOffset, callback, callbackData);
 }
 
 

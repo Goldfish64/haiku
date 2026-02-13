@@ -176,7 +176,7 @@ VMBus::~VMBus()
 
 
 status_t
-VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset,
+VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxOffset,
 	hyperv_bus_callback callback, void* callbackData)
 {
 	// Channel must be valid
@@ -215,10 +215,11 @@ VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset,
 	message->open_id = channel;
 	message->gpadl_id = gpadl;
 	message->target_cpu = 0;
-	message->rx_page_offset = rxPageOffset;
+	message->rx_page_offset = rxOffset >> HV_PAGE_SHIFT;
 	memset(message->user_data, 0, sizeof(message->user_data));
 
-	TRACE("Opening channel %u with ring GPADL %u\n", channel, gpadl);
+	TRACE("Opening channel %u with ring GPADL %u rx offset 0x%X\n", channel,
+		gpadl, rxOffset);
 
 	// Send open channel message to Hyper-V
 	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_OPEN_CHANNEL_RESPONSE, channel);

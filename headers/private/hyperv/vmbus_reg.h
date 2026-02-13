@@ -278,4 +278,59 @@ typedef union { // VMBus combined message
 	vmbus_msg_disconnect				disconnect;
 } _PACKED vmbus_msg;
 
+typedef struct { // VMBus ring buffer structure
+	volatile uint32	write_index;
+	volatile uint32	read_index;
+
+	volatile uint32	interrupt_mask;
+	volatile uint32	pending_send_size;
+
+	uint32	reserved[12];
+	union {
+		struct {
+			uint32 pending_send_size_supported : 1;
+		};
+		uint32 value;
+	} features;
+
+	// Padding to ensure data buffer is page-aligned.
+	uint8 padding[HV_PAGE_SIZE - 76];
+
+	volatile uint64 guest_to_host_interrupt_count;
+
+	uint8	buffer[];
+} _PACKED vmbus_ring_buffer;
+HV_STATIC_ASSERT(sizeof(vmbus_ring_buffer) == HV_PAGE_SIZE, "vmbus_ring_buffer size mismatch");
+
+enum { // VMBus packet types
+	VMBUS_PKTTYPE_INVALID					= 0,
+	VMBUS_PKTTYPE_SYNCH						= 1,
+	VMBUS_PKTTYPE_ADD_TRANSFER_PAGESET		= 2,
+	VMBUS_PKTTYPE_REMOVE_TRANSFER_PAGESET	= 3,
+	VMBUS_PKTTYPE_CREATE_GPADL				= 4,
+	VMBUS_PKTTYPE_FREE_GPADL				= 5,
+	VMBUS_PKTTYPE_DATA_INBAND				= 6,
+	VMBUS_PKTTYPE_DATA_USING_TRANSFER_PAGES	= 7,
+	VMBUS_PKTTYPE_DATA_USING_GPADL			= 8,
+	VMBUS_PKTTYPE_DATA_USING_GPA_DIRECT		= 9,
+	VMBUS_PKTTYPE_CANCEL_REQUEST			= 10,
+	VMBUS_PKTTYPE_COMPLETION				= 11,
+	VMBUS_PKTTYPE_DATA_USING_ADDT_PKT		= 12,
+	VMBUS_PKTTYPE_ADDT_DATA					= 13,
+	VMBUS_PKTTYPE_MAX
+};
+
+#define VMBUS_PKT_FLAGS_RESPONSE_REQUIRED		(1 << 0)
+
+#define VMBUS_PKT_SIZE_SHIFT	3
+#define VMBUS_PKT_ALIGN(x)		(((x) + (sizeof(uint64) - 1)) &~ (sizeof(uint64) - 1))
+
+typedef struct { // VMBus packet header
+	uint16	type;
+	uint16	header_length;
+	uint16	total_length;
+	uint16	flags;
+	uint64	transaction_id;
+} _PACKED vmbus_pkt_header;
+
 #endif // _VMBUS_REG_H_

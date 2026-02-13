@@ -91,7 +91,7 @@ public:
 									~VMBus();
 			status_t				InitCheck() const { return fStatus; }
 
-			status_t				OpenChannel(uint32 channel, uint32 gpadl, uint32 rxPageOffset,
+			status_t				OpenChannel(uint32 channel, uint32 gpadl, uint32 rxOffset,
 										hyperv_bus_callback callback, void* callbackData);
 			status_t				CloseChannel(uint32 channel);
 			status_t				AllocateGPADL(uint32 channel, uint32 length, void** _buffer,

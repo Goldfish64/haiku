@@ -8,6 +8,9 @@
 #include <device_manager.h>
 #include <KernelExport.h>
 
+#include <hyperv_reg.h>
+#include <vmbus_reg.h>
+
 #define HYPERV_VMBUS_MODULE_NAME		"bus_managers/hyperv/root/driver_v1"
 #define HYPERV_DEVICE_MODULE_NAME		"bus_managers/hyperv/device/driver_v1"
 
@@ -47,7 +50,7 @@ typedef struct hyperv_bus_interface {
 	driver_module_info info;
 
 	status_t (*open_channel)(hyperv_bus cookie, uint32 channel, uint32 gpadl,
-		uint32 rxPageOffset, hyperv_bus_callback callback, void* callbackData);
+		uint32 rxOffset, hyperv_bus_callback callback, void* callbackData);
 	status_t (*close_channel)(hyperv_bus cookie, uint32 channel);
 	status_t (*allocate_gpadl)(hyperv_bus cookie, uint32 channel, uint32 length,
 		void** _buffer, uint32* _gpadl);
@@ -62,6 +65,10 @@ typedef struct hyperv_device_interface {
 	status_t (*open)(hyperv_device cookie, uint32 txLength, uint32 rxLength,
 		hyperv_device_callback callback, void* callbackData);
 	status_t (*close)(hyperv_device cookie);
+	status_t (*write_packet)(hyperv_device cookie, uint16 type, void* buffer,
+		uint32 length, bool responseRequired, uint64 transactionID);
+	status_t (*read_packet)(hyperv_device cookie, vmbus_pkt_header* _header,
+		uint32* _headerLength, void* _buffer, uint32* _length);
 } hyperv_device_interface;
 
 // Device attributes for the VMBus device

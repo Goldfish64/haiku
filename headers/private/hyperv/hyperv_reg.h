@@ -10,6 +10,18 @@
 #define HV_PAGE_SHIFT			12
 #define HV_PAGE_ALIGN(x) 		(((x) + (HV_PAGE_SIZE - 1)) & ~(HV_PAGE_SIZE - 1))
 #define HV_BYTES_TO_PAGES(x)	(HV_PAGE_ALIGN(x) >> HV_PAGE_SHIFT)
+#define HV_MS_TO_US(x)			((x) * 1000ULL)
+
+// Compile time assert checks
+#if __GNUC__ > 3
+#ifdef __cplusplus
+#define HV_STATIC_ASSERT(cond, msg)	static_assert(cond, msg)
+#else
+#define HV_STATIC_ASSERT(cond, msg)	_Static_assert(cond, msg)
+#endif
+#else
+#define HV_STATIC_ASSERT(cond, msg)
+#endif
 
 // CPUID leaves
 #define IA32_CPUID_LEAF_HYPERVISOR				0x40000000

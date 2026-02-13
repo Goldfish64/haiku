@@ -24,6 +24,18 @@
 #else
 #	define TRACE(x...) ;
 #endif
+//#define TRACE_VMBUS_DEVICE_TX
+#ifdef TRACE_VMBUS_DEVICE_TX
+#	define TRACE_TX(x...) dprintf("\33[36mvmbus_device:\33[0m " x)
+#else
+#	define TRACE_TX(x...) ;
+#endif
+//#define TRACE_VMBUS_DEVICE_RX
+#ifdef TRACE_VMBUS_DEVICE_RX
+#	define TRACE_RX(x...) dprintf("\33[36mvmbus_device:\33[0m " x)
+#else
+#	define TRACE_RX(x...) ;
+#endif
 #define TRACE_ALWAYS(x...)	dprintf("\33[36mvmbus_device:\33[0m " x)
 #define ERROR(x...)			dprintf("\33[36mvmbus_device:\33[0m " x)
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
@@ -37,10 +49,22 @@ public:
 			status_t				Open(uint32 txLength, uint32 rxLength,
 										hyperv_device_callback callback, void* callbackData);
 			status_t				Close();
+			status_t				WritePacket(uint16 type, const void* buffer, uint32 length,
+										bool responseRequired, uint64 transactionID);
+			status_t				PeekPacket(void* _buffer, uint32 length);
+			status_t				ReadPacket(vmbus_pkt_header* _header, uint32* _headerLength,
+										void* _buffer, uint32* _length);
 
 private:
 	static	void					_CallbackHandler(void* arg);
 	static	void					_DPCHandler(void* arg);
+
+	inline	uint32					_AvailableTX();
+	inline  uint32					_WriteTX(uint32 writeIndex, const void* buffer, uint32 length);
+			status_t				_WriteTXData(const iovec txData[], size_t txDataCount);
+	inline	uint32					_AvailableRX();
+	inline	uint32					_SeekRX(uint32 readIndex, uint32 length);
+	inline  uint32					_ReadRX(uint32 readIndex, void* buffer, uint32 length);
 
 private:
 			device_node* 			fNode;
@@ -57,6 +81,9 @@ private:
 			uint32					fTXRingLength;
 			vmbus_ring_buffer*		fRXRing;
 			uint32					fRXRingLength;
+
+			spinlock				fTXLock;
+			spinlock				fRXLock;
 
 			hyperv_device_callback	fCallback;
 			void*					fCallbackData;
