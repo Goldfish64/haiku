@@ -92,31 +92,31 @@ VMBus::_InitInterruptCPU(int32 cpu)
 		| (msr & IA32_MSR_HV_SIMP_RSVD_MASK)
 		| IA32_MSR_HV_SIMP_ENABLE;
 	x86_write_msr(IA32_MSR_HV_SIMP, msr);
-	TRACE("cpu%u: simp new msr 0x%LX\n", cpu, msr);
+	TRACE("cpu%u: simp new msr 0x%llX\n", cpu, (unsigned long long)msr);
 
 	msr = x86_read_msr(IA32_MSR_HV_SIEFP);
 	msr = ((eventFlagsPhysAddr >> HV_PAGE_SHIFT) << IA32_MSR_HV_SIEFP_PAGE_SHIFT)
 		| (msr & IA32_MSR_HV_SIEFP_RSVD_MASK)
 		| IA32_MSR_HV_SIEFP_ENABLE;
 	x86_write_msr(IA32_MSR_HV_SIEFP, msr);
-	TRACE("cpu%u: siefp new msr 0x%LX\n", cpu, msr);
+	TRACE("cpu%u: siefp new msr 0x%llX\n", cpu, (unsigned long long)msr);
 
 	// Configure interrupt vector for incoming VMBus messages
 	msr = x86_read_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_MESSAGE);
 	msr = fInterruptVector | (msr & IA32_MSR_HV_SINT_RSVD_MASK);
 	x86_write_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_MESSAGE, msr);
-	TRACE("cpu%u: sint%u new msr 0x%LX\n", VMBUS_SINT_MESSAGE, cpu, msr);
+	TRACE("cpu%u: sint%u new msr 0x%llX\n", VMBUS_SINT_MESSAGE, cpu, (unsigned long long)msr);
 
 	// Configure interrupt vector for VMBus timers
 	msr = x86_read_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_TIMER);
 	msr = fInterruptVector | (msr & IA32_MSR_HV_SINT_RSVD_MASK);
 	x86_write_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_TIMER, msr);
-	TRACE("cpu%u: sint%u new msr 0x%LX\n", VMBUS_SINT_TIMER, cpu, msr);
+	TRACE("cpu%u: sint%u new msr 0x%llX\n", VMBUS_SINT_TIMER, cpu, (unsigned long long)msr);
 
 	// Enable interrupts
 	msr = x86_read_msr(IA32_MSR_HV_SCONTROL);
 	msr = (msr & IA32_MSR_HV_SCONTROL_RSVD_MASK)
 		| IA32_MSR_HV_SCONTROL_ENABLE;
 	x86_write_msr(IA32_MSR_HV_SCONTROL, msr);
-	TRACE("cpu%u: scontrol new msr 0x%LX\n", cpu, msr);
+	TRACE("cpu%u: scontrol new msr 0x%llX\n", cpu, (unsigned long long)msr);
 }
