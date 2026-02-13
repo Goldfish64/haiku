@@ -20,8 +20,4 @@ extern dpc_module_info* gDPC;
 extern hyperv_bus_interface gVMBusModule;
 extern hyperv_device_interface gVMBusDeviceModule;
 
-phys_addr_t hyperv_mem_vtophys(void* vaddr);
-
-#define HYPERV_VTOPHYS_ERROR	(~0ULL)
-
 #endif // _HYPERV_PRIVATE_H_

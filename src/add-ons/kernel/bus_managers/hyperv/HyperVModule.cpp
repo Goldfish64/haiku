@@ -24,21 +24,6 @@ device_manager_info* gDeviceManager;
 acpi_module_info* gACPI;
 dpc_module_info* gDPC;
 
-phys_addr_t
-hyperv_mem_vtophys(void* vaddr)
-{
-	physical_entry entry;
-	status_t status = get_memory_map((void*)vaddr, 1, &entry, 1);
-	if (status != B_OK) {
-		panic("hyperv: get_memory_map failed for %p: %s\n",
-			(void*)vaddr, strerror(status));
-		return HYPERV_VTOPHYS_ERROR;
-	}
-
-	return entry.address;
-}
-
-
 module_dependency module_dependencies[] = {
 	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
 	{ B_ACPI_MODULE_NAME, (module_info**)&gACPI },

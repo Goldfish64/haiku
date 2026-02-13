@@ -105,6 +105,8 @@ private:
 			uint16					_HypercallSignalEvent(uint32 connId);
 
 			status_t				_InitInterrupts();
+	static	void					_InitInterruptCPUHandler(void *data, int cpu);
+			void					_InitInterruptCPU(int32 cpu);
 	static	acpi_status				_InterruptACPICallback(ACPI_RESOURCE* res, void* context);
 	static	int32					_InterruptHandler(void *data);
 			int32					_Interrupt();
@@ -138,6 +140,7 @@ private:
 			void*					fMessageDPCHandle;
 			VMBusEventFlagsHandler	fEventFlagsHandler;
 
+			uint8					fInterruptVector;
 			int32					fCPUCount;
 			VMBusPerCPUInfo*		fCPUData;
 			uint32					fVersion;

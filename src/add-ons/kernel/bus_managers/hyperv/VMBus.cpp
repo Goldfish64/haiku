@@ -52,6 +52,7 @@ VMBus::VMBus(device_node *node)
 	fStatus(B_NO_INIT),
 	fMessageDPCHandle(NULL),
 	fEventFlagsHandler(&VMBus::_InterruptEventFlagsNull),
+	fInterruptVector(0),
 	fCPUCount(0),
 	fCPUData(NULL),
 	fVersion(0),
@@ -171,7 +172,7 @@ VMBus::VMBus(device_node *node)
 
 VMBus::~VMBus()
 {
-
+	// TODO: Need to implement
 }
 
 
@@ -255,6 +256,7 @@ VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxOffset,
 status_t
 VMBus::CloseChannel(uint32 channel)
 {
+	// TODO: Need to implement
 	return B_ERROR;
 }
 
@@ -447,6 +449,7 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 status_t
 VMBus::FreeGPADL(uint32 channel, uint32 gpadl)
 {
+	// TODO: Need to implement
 	return B_ERROR;
 }
 
@@ -477,52 +480,6 @@ VMBus::SignalChannel(uint32 channel)
 
 
 status_t
-VMBus::_InitHypercalls()
-{
-	// Set the guest ID
-	x86_write_msr(IA32_MSR_HV_GUEST_OS_ID, IA32_MSR_HV_GUEST_OS_ID_HAIKU);
-
-	// Enable hypercalls
-	uint64 msr = x86_read_msr(IA32_MSR_HV_HYPERCALL);
-	msr = ((fHyperCallPhysAddr >> HV_PAGE_SHIFT) << IA32_MSR_HV_HYPERCALL_PAGE_SHIFT)
-		| (msr & IA32_MSR_HV_HYPERCALL_RSVD_MASK)
-		| IA32_MSR_HV_HYPERCALL_ENABLE;
-	x86_write_msr(IA32_MSR_HV_HYPERCALL, msr);
-
-	// Check that hypercalls are enabled
-	msr = x86_read_msr(IA32_MSR_HV_HYPERCALL);
-	if ((msr & IA32_MSR_HV_HYPERCALL_ENABLE) == 0)
-		return B_ERROR;
-
-	TRACE("Hypercalls enabled at %p\n", fHypercallPage);
-	return B_OK;
-}
-
-
-// TODO: Move this to its own arch file
-uint16
-VMBus::_HypercallPostMessage(phys_addr_t physAddr)
-{
-	uint64 status;
-	__asm __volatile("call *%3"
-		: "=a" (status)
-		: "c" (HYPERCALL_POST_MESSAGE), "d" (physAddr), "m" (fHypercallPage));
-	return (uint16) (status & 0xFFFF);
-}
-
-
-uint16
-VMBus::_HypercallSignalEvent(uint32 connId)
-{
-	uint64 status;
-	__asm __volatile("call *%3"
-		: "=a" (status)
-		: "c" (HYPERCALL_SIGNAL_EVENT), "d" (connId), "m" (fHypercallPage));
-	return (uint16) (status & 0xFFFF);
-}
-
-
-status_t
 VMBus::_InitInterrupts()
 {
 	// Get the VMBus ACPI device
@@ -549,57 +506,26 @@ VMBus::_InitInterrupts()
 		return B_IO_ERROR;
 
 	// Wire up the interrupt handler to the ACPI provided IRQ
-	// TODO: Get the vector offset here for x86, and determine vector on ARM64
-	uint8 vector = irq + 0x20;
-	TRACE("VMBus irq interrupt line: %u, vector: %u\n", irq, vector);
+	fInterruptVector = irq + ARCH_INTERRUPT_BASE;
+	TRACE("VMBus irq interrupt line: %u, vector: %u\n", irq, fInterruptVector);
 	status = install_io_interrupt_handler(irq, _InterruptHandler, this, 0);
 	if (status != B_OK) {
 		ERROR("Can't install interrupt handler\n");
 		return status;
 	}
 
-	phys_addr_t messagesPhysAddr = hyperv_mem_vtophys((void*)fCPUData[0].messages);
-	phys_addr_t eventFlagsPhysAddr = hyperv_mem_vtophys((void*)fCPUData[0].event_flags);
-
-	TRACE("SIMP %p SIEFP %p vec %u\n", fCPUData[0].messages, fCPUData[0].event_flags, vector);
-
-	TRACE("SIMP 0x%lX SIEFP 0x%lX\n", messagesPhysAddr, eventFlagsPhysAddr);
-
-	// Configure SIMP and SIEFP
-	uint64 msr = x86_read_msr(IA32_MSR_HV_SIMP);
-	msr = ((messagesPhysAddr >> HV_PAGE_SHIFT) << IA32_MSR_HV_SIMP_PAGE_SHIFT)
-		| (msr & IA32_MSR_HV_SIMP_RSVD_MASK)
-		| IA32_MSR_HV_SIMP_ENABLE;
-	x86_write_msr(IA32_MSR_HV_SIMP, msr);
-	TRACE("SIMP new msr 0x%lX\n", msr);
-
-	msr = x86_read_msr(IA32_MSR_HV_SIEFP);
-	msr = ((eventFlagsPhysAddr >> HV_PAGE_SHIFT) << IA32_MSR_HV_SIEFP_PAGE_SHIFT)
-		| (msr & IA32_MSR_HV_SIEFP_RSVD_MASK)
-		| IA32_MSR_HV_SIEFP_ENABLE;
-	x86_write_msr(IA32_MSR_HV_SIEFP, msr);
-	TRACE("SIEFP new msr 0x%lX\n", msr);
-
-	// Configure interrupt vector for incoming VMBus messages
-	msr = x86_read_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_MESSAGE);
-	msr = vector | (msr & IA32_MSR_HV_SINT_RSVD_MASK);
-	x86_write_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_MESSAGE, msr);
-	TRACE("SINT%u new msr 0x%lX\n", VMBUS_SINT_MESSAGE, msr);
-
-	// Configure interrupt vector for VMBus timers
-	msr = x86_read_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_TIMER);
-	msr = vector | (msr & IA32_MSR_HV_SINT_RSVD_MASK);
-	x86_write_msr(IA32_MSR_HV_SINT0 + VMBUS_SINT_TIMER, msr);
-	TRACE("SINT%u new msr 0x%lX\n", VMBUS_SINT_TIMER, msr);
-
-	// Enable interrupts
-	msr = x86_read_msr(IA32_MSR_HV_SCONTROL);
-	msr = (msr & IA32_MSR_HV_SCONTROL_RSVD_MASK)
-		| IA32_MSR_HV_SCONTROL_ENABLE;
-	x86_write_msr(IA32_MSR_HV_SCONTROL, msr);
-	TRACE("SCONTROL new msr 0x%lX\n", msr);
+	// Setup all CPUs
+	call_all_cpus_sync(_InitInterruptCPUHandler, this);
 
 	return B_OK;
+}
+
+
+/*static*/ void
+VMBus::_InitInterruptCPUHandler(void *data, int cpu)
+{
+	VMBus* vmbus = reinterpret_cast<VMBus*>(data);
+	return vmbus->_InitInterruptCPU(cpu);
 }
 
 
@@ -667,7 +593,7 @@ VMBus::_InterruptEventFlagsLegacy(int32 cpu)
 	for (uint32 i = 1; i <= fHighestChannelID; i++) {
 		if ((i % 32) == 0)
 			flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags++, 0));
-			
+
 		if (flags & 0x1 && fChannels[i] != NULL && fChannels[i]->callback != NULL)
 			fChannels[i]->callback(fChannels[i]->callback_data);
 		flags >>= 1;
@@ -791,7 +717,13 @@ VMBus::_AllocMsgInfo()
 	if (msgInfo == NULL)
 		return NULL;
 
-	msgInfo->post_msg_physaddr = hyperv_mem_vtophys(&msgInfo->post_msg);
+	physical_entry entry;
+	status_t status = get_memory_map(&msgInfo->post_msg, 1, &entry, 1);
+	if (status != B_OK) {
+		return NULL;
+	}
+
+	msgInfo->post_msg_physaddr = entry.address;
 	msgInfo->message = (vmbus_msg*) msgInfo->post_msg.data;
 	msgInfo->condition_variable.Init(msgInfo, "vmbus msg info");
 	return msgInfo;
@@ -942,16 +874,35 @@ VMBus::_ConnectVersion(uint32 version)
 
 	message->version = version;
 	message->target_cpu = 0;
-	message->event_flags_physaddr = hyperv_mem_vtophys((void*)fEventFlagsPage);
-	message->monitor1_physaddr = hyperv_mem_vtophys(fMonitorPage1);
-	message->monitor2_physaddr = hyperv_mem_vtophys(fMonitorPage2);
+
+	physical_entry entryEventFlags;
+	status_t status = get_memory_map(fEventFlagsPage, 1, &entryEventFlags, 1);
+	if (status != B_OK) {
+		return status;
+	}
+
+	physical_entry entryMonitorPage1;
+	status = get_memory_map(fMonitorPage1, 1, &entryMonitorPage1, 1);
+	if (status != B_OK) {
+		return status;
+	}
+
+	physical_entry entryMonitorPage2;
+	status = get_memory_map(fMonitorPage2, 1, &entryMonitorPage2, 1);
+	if (status != B_OK) {
+		return status;
+	}
+
+	message->event_flags_physaddr = entryEventFlags.address;
+	message->monitor1_physaddr = entryMonitorPage1.address;
+	message->monitor2_physaddr = entryMonitorPage2.address;
 
 	TRACE("Connecting to VMBus version %u.%u\n", GET_VMBUS_VERSION_MAJOR(version),
 		GET_VMBUS_VERSION_MINOR(version));
 
 	// Attempt connection with specified version
 	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_CONNECT_RESPONSE);
-	status_t status = _SendMessage(msgInfo);
+	status = _SendMessage(msgInfo);
 	if (status != B_OK) {
 		_RemoveActiveMsgInfo(msgInfo);
 		_ReturnFreeMsgInfo(msgInfo);
