@@ -87,7 +87,7 @@ typedef void (VMBus::*VMBusEventFlagsHandler)(int32 cpu);
 
 class VMBus {
 public:
-									VMBus(device_node *node);
+									VMBus(device_node* node);
 									~VMBus();
 			status_t				InitCheck() const { return fStatus; }
 
@@ -105,32 +105,32 @@ private:
 			uint16					_HypercallSignalEvent(uint32 connId);
 
 			status_t				_InitInterrupts();
-	static	void					_InitInterruptCPUHandler(void *data, int cpu);
+	static	void					_InitInterruptCPUHandler(void* data, int cpu);
 			void					_InitInterruptCPU(int32 cpu);
 	static	acpi_status				_InterruptACPICallback(ACPI_RESOURCE* res, void* context);
-	static	int32					_InterruptHandler(void *data);
+	static	int32					_InterruptHandler(void* data);
 			int32					_Interrupt();
 			void					_InterruptEventFlags(int32 cpu);
 			void					_InterruptEventFlagsLegacy(int32 cpu);
 			void					_InterruptEventFlagsNull(int32 cpu);
-	static	void					_MessageDPCHandler(void *arg);
+	static	void					_MessageDPCHandler(void* arg);
 			void					_MessageDPC(int32_t cpu);
 
 			VMBusMsgInfo*			_AllocMsgInfo();
-			void					_ReturnFreeMsgInfo(VMBusMsgInfo *msgInfo);
-	inline	status_t				_WaitForMsgInfo(VMBusMsgInfo *msgInfo);
-	inline	void					_AddActiveMsgInfo(VMBusMsgInfo *msgInfo, uint32 respType, uint32 respData = 0);
-	inline	void					_RemoveActiveMsgInfo(VMBusMsgInfo *msgInfo);
+			void					_ReturnFreeMsgInfo(VMBusMsgInfo* msgInfo);
+	inline	status_t				_WaitForMsgInfo(VMBusMsgInfo* msgInfo);
+	inline	void					_AddActiveMsgInfo(VMBusMsgInfo* msgInfo, uint32 respType, uint32 respData = 0);
+	inline	void					_RemoveActiveMsgInfo(VMBusMsgInfo* msgInfo);
 			void					_NotifyActiveMsgInfo(uint32 respType, uint32 respData,
 										vmbus_msg *message, uint32 messageSize);
-			status_t				_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize = 0);
+			status_t				_SendMessage(VMBusMsgInfo* msgInfo, uint32 msgSize = 0);
 			void					_EomMessage(int32_t cpu);
 	static	void					_WriteEomMsr(void* data, int cpu);
 
 			status_t				_ConnectVersion(uint32 version);
 			status_t				_Connect();
 			status_t				_RequestChannels();
-	static	status_t				_ChannelQueueThreadHandler(void *arg);
+	static	status_t				_ChannelQueueThreadHandler(void* arg);
 			status_t				_ChannelQueueThread();
 	inline	uint32					_GetGPADLHandle();
 

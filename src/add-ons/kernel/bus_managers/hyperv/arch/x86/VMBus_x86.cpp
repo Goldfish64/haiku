@@ -38,7 +38,8 @@ VMBus::_HypercallPostMessage(phys_addr_t physAddr)
 #if defined(__i386__)
 	__asm __volatile("call *%5"
 		: "=A" (status)
-		: "d" (0), "a" (HYPERCALL_POST_MESSAGE), "b" (0), "c" (static_cast<uint32>(physAddr)), "m" (fHypercallPage));
+		: "d" (0), "a" (HYPERCALL_POST_MESSAGE), "b" (0),
+			"c" (static_cast<uint32>(physAddr)), "m" (fHypercallPage));
 #elif defined(__x86_64__)
 	__asm __volatile("call *%3"
 		: "=a" (status)

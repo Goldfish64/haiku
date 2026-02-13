@@ -8,7 +8,7 @@
 
 
 
-VMBusDevice::VMBusDevice(device_node *node)
+VMBusDevice::VMBusDevice(device_node* node)
 	:
 	fNode(node),
 	fStatus(B_NO_INIT),
@@ -97,7 +97,7 @@ VMBusDevice::Open(uint32 txLength, uint32 rxLength,
 	fRXRing = reinterpret_cast<vmbus_ring_buffer*>(static_cast<uint8*>(fRingBuffer)
 		+ txTotalLength);
 	fRXRingLength = rxLength;
-	
+
 	TRACE_TX("Channel %u RX old read idx 0x%X write idx 0x%X\n", fChannelID,
 		(uint32) atomic_get((int32*)&fRXRing->read_index),
 		(uint32) atomic_get((int32*)&fRXRing->write_index));
@@ -302,8 +302,8 @@ VMBusDevice::_AvailableTX()
 	uint32 writeIndex = (uint32) atomic_get((int32*)&fTXRing->write_index);
 
 	return (writeIndex >= readIndex)
-    	? (fTXRingLength - (writeIndex - readIndex))
-    	: (readIndex - writeIndex);
+		? (fTXRingLength - (writeIndex - readIndex))
+		: (readIndex - writeIndex);
 }
 
 
@@ -376,9 +376,10 @@ VMBusDevice::_WriteTXData(const iovec txData[], size_t txDataCount)
 	// Signal Hyper-V if required; signaling is only needed if the ring buffer is changing state
 	// from empty to having some amount of data. It does not need a signal if the buffer already
 	// has some amount of data, and we are just adding more
-	
+
 	memory_read_barrier();
-	if (fTXRing->interrupt_mask == 0 && writeIndexOld == (uint32) atomic_get((int32*)&fTXRing->read_index)) {
+	if (fTXRing->interrupt_mask == 0 && writeIndexOld ==
+			(uint32) atomic_get((int32*)&fTXRing->read_index)) {
 		fTXRing->guest_to_host_interrupt_count++;
 		fVMBus->signal_channel(fVMBusCookie, fChannelID);
 	}
@@ -394,9 +395,10 @@ VMBusDevice::_AvailableRX()
 	uint32 writeIndex = (uint32) atomic_get((int32*)&fRXRing->write_index);
 
 	return fRXRingLength - ((writeIndex >= readIndex)
-    	? (fRXRingLength - (writeIndex - readIndex))
-    	: (readIndex - writeIndex));
+		? (fRXRingLength - (writeIndex - readIndex))
+		: (readIndex - writeIndex));
 }
+
 
 inline uint32
 VMBusDevice::_SeekRX(uint32 readIndex, uint32 length)

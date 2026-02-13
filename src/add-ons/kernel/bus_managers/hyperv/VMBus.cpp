@@ -46,7 +46,7 @@ sVMBusMessageSizes[VMBUS_MSGTYPE_MAX] = {
 };
 
 
-VMBus::VMBus(device_node *node)
+VMBus::VMBus(device_node* node)
 	:
 	fNode(node),
 	fStatus(B_NO_INIT),
@@ -522,7 +522,7 @@ VMBus::_InitInterrupts()
 
 
 /*static*/ void
-VMBus::_InitInterruptCPUHandler(void *data, int cpu)
+VMBus::_InitInterruptCPUHandler(void* data, int cpu)
 {
 	VMBus* vmbus = reinterpret_cast<VMBus*>(data);
 	return vmbus->_InitInterruptCPU(cpu);
@@ -543,7 +543,7 @@ VMBus::_InterruptACPICallback(ACPI_RESOURCE* res, void* context)
 
 
 /*static*/ int32
-VMBus::_InterruptHandler(void *data)
+VMBus::_InterruptHandler(void* data)
 {
 	VMBus* vmbus = reinterpret_cast<VMBus*>(data);
 	return vmbus->_Interrupt();
@@ -610,7 +610,7 @@ VMBus::_InterruptEventFlagsNull(int32 cpu)
 
 
 /*static*/ void
-VMBus::_MessageDPCHandler(void *arg)
+VMBus::_MessageDPCHandler(void* arg)
 {
 	VMBusPerCPUInfo* cpuData = reinterpret_cast<VMBusPerCPUInfo*>(arg);
 	cpuData->vmbus->_MessageDPC(cpuData->cpu);
@@ -703,15 +703,15 @@ VMBusMsgInfo*
 VMBus::_AllocMsgInfo()
 {
 	VMBusMsgInfo* msgInfo;
-	MutexLocker msgLocker(fFreeMsgLock);
+	mutex_lock(&fFreeMsgLock);
 	if (fFreeMsgList.Head() != NULL) {
 		msgInfo = fFreeMsgList.RemoveHead();
-		msgLocker.Unlock();
+		mutex_unlock(&fFreeMsgLock);
 
 		msgInfo->resp_type = VMBUS_MSGTYPE_INVALID;
 		return msgInfo;
 	}
-	msgLocker.Unlock();
+	mutex_unlock(&fFreeMsgLock);
 
 	msgInfo = new(std::nothrow) VMBusMsgInfo;
 	if (msgInfo == NULL)
@@ -731,50 +731,50 @@ VMBus::_AllocMsgInfo()
 
 
 void
-VMBus::_ReturnFreeMsgInfo(VMBusMsgInfo *msgInfo)
+VMBus::_ReturnFreeMsgInfo(VMBusMsgInfo* msgInfo)
 {
-	MutexLocker msgLocker(fFreeMsgLock);
+	mutex_lock(&fFreeMsgLock);
 	fFreeMsgList.Add(msgInfo);
-	msgLocker.Unlock();
+	mutex_unlock(&fFreeMsgLock);
 }
 
 
 inline status_t
-VMBus::_WaitForMsgInfo(VMBusMsgInfo *msgInfo)
+VMBus::_WaitForMsgInfo(VMBusMsgInfo* msgInfo)
 {
 	return msgInfo->condition_variable.Wait(B_CAN_INTERRUPT);
 }
 
 
 inline void
-VMBus::_AddActiveMsgInfo(VMBusMsgInfo *msgInfo, uint32 respType, uint32 respData)
+VMBus::_AddActiveMsgInfo(VMBusMsgInfo* msgInfo, uint32 respType, uint32 respData)
 {
-	MutexLocker msgLocker(fActiveMsgLock);
+	mutex_lock(&fActiveMsgLock);
 	msgInfo->resp_type = respType;
 	msgInfo->resp_data = respData;
 	fActiveMsgList.Add(msgInfo);
-	msgLocker.Unlock();
+	mutex_unlock(&fActiveMsgLock);
 }
 
 
 inline void
-VMBus::_RemoveActiveMsgInfo(VMBusMsgInfo *msgInfo)
+VMBus::_RemoveActiveMsgInfo(VMBusMsgInfo* msgInfo)
 {
-	MutexLocker msgLocker(fActiveMsgLock);
+	mutex_lock(&fActiveMsgLock);
 	fActiveMsgList.Remove(msgInfo);
-	msgLocker.Unlock();
+	mutex_unlock(&fActiveMsgLock);
 }
 
 
 void
-VMBus::_NotifyActiveMsgInfo(uint32 respType, uint32 respData, vmbus_msg *msg, uint32 msgSize)
+VMBus::_NotifyActiveMsgInfo(uint32 respType, uint32 respData, vmbus_msg* msg, uint32 msgSize)
 {
-	MutexLocker msgLocker(fActiveMsgLock);
+	mutex_lock(&fActiveMsgLock);
 	VMBusMsgInfo* msgInfo = fActiveMsgList.Head();
 	while (msgInfo != NULL) {
 		if (msgInfo->resp_type == respType && msgInfo->resp_data == respData) {
 			fActiveMsgList.Remove(msgInfo);
-			msgLocker.Unlock();
+			mutex_unlock(&fActiveMsgLock);
 
 			memcpy(msgInfo->message, msg, msgSize);
 			msgInfo->condition_variable.NotifyAll();
@@ -783,7 +783,8 @@ VMBus::_NotifyActiveMsgInfo(uint32 respType, uint32 respData, vmbus_msg *msg, ui
 
 		msgInfo = fActiveMsgList.GetNext(msgInfo);
 	}
-	msgLocker.Unlock();
+
+	mutex_unlock(&fActiveMsgLock);
 }
 
 
@@ -802,7 +803,7 @@ VMBus::_SendMessage(VMBusMsgInfo *msgInfo, uint32 msgSize)
 			return B_BAD_VALUE;
 	}
 
-	hypercall_post_msg_input *postMsg = &msgInfo->post_msg;
+	hypercall_post_msg_input* postMsg = &msgInfo->post_msg;
 	postMsg->connection_id = VMBUS_CONNID_MESSAGE;
 	postMsg->reserved = 0;
 	postMsg->message_type = HYPERV_MSGTYPE_CHANNEL;
@@ -855,7 +856,7 @@ VMBus::_EomMessage(int32_t cpu)
 
 
 /*static*/ void
-VMBus::_WriteEomMsr(void *data, int cpu)
+VMBus::_WriteEomMsr(void* data, int cpu)
 {
 	x86_write_msr(IA32_MSR_HV_EOM, 0);
 }
@@ -985,7 +986,7 @@ VMBus::_RequestChannels()
 
 
 /*static*/ status_t
-VMBus::_ChannelQueueThreadHandler(void *arg)
+VMBus::_ChannelQueueThreadHandler(void* arg)
 {
 	VMBus* vmbus = reinterpret_cast<VMBus*>(arg);
 	return vmbus->_ChannelQueueThread();
@@ -1030,10 +1031,12 @@ VMBus::_ChannelQueueThread()
 				newChannel->type_id.data4[6], newChannel->type_id.data4[7]);
 			snprintf(instanceStr, sizeof (instanceStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 				newChannel->instance_id.data1, newChannel->instance_id.data2, newChannel->instance_id.data3,
-				newChannel->instance_id.data4[0], newChannel->instance_id.data4[1], newChannel->instance_id.data4[2],
-				newChannel->instance_id.data4[3], newChannel->instance_id.data4[4], newChannel->instance_id.data4[5],
+				newChannel->instance_id.data4[0], newChannel->instance_id.data4[1],
+				newChannel->instance_id.data4[2], newChannel->instance_id.data4[3],
+				newChannel->instance_id.data4[4], newChannel->instance_id.data4[5],
 				newChannel->instance_id.data4[6], newChannel->instance_id.data4[7]);
-			TRACE("Registering VMBus channel %u type %s inst %s\n", newChannel->channel_id, typeStr, instanceStr);
+			TRACE("Registering VMBus channel %u type %s inst %s\n", newChannel->channel_id,
+				typeStr, instanceStr);
 
 			// Get the pretty name
 			char prettyName[sizeof (HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT) + 8];

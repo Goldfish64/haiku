@@ -42,7 +42,7 @@
 
 class VMBusDevice {
 public:
-									VMBusDevice(device_node *node);
+									VMBusDevice(device_node* node);
 									~VMBusDevice();
 			status_t				InitCheck() const { return fStatus; }
 
