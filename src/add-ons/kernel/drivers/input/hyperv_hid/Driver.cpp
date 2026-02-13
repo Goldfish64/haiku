@@ -162,7 +162,7 @@ hyperv_hid_supports_device(device_node* parent)
 	if (strcmp(type, VMBUS_TYPE_INPUT) != 0)
 		return 0.0f;
 
-	TRACE("Hyper-V Input device found!\n");
+	TRACE("Hyper-V HID device found!\n");
 	return 0.8f;
 }
 
@@ -178,7 +178,7 @@ hyperv_hid_register_device(device_node* parent)
 		{ NULL }
 	};
 
-	return sDeviceManager->register_node(parent, HYPERV_INPUT_DRIVER_MODULE_NAME,
+	return sDeviceManager->register_node(parent, HYPERV_HID_DRIVER_MODULE_NAME,
 		attributes, NULL, NULL);
 }
 
@@ -267,7 +267,7 @@ hyperv_hid_register_child_devices(void* driverCookie)
 
 		gDeviceList->AddDevice(handler->PublishPath(), handler);
 		sDeviceManager->publish_device(hidCookie->node, pathBuffer,
-			HYPERV_INPUT_DEVICE_MODULE_NAME);
+			HYPERV_HID_DEVICE_MODULE_NAME);
 	}
 
 	return B_OK;
@@ -299,9 +299,9 @@ std_ops(int32 op, ...)
 }
 
 
-static device_module_info sHyperVInputDeviceModule = {
+static device_module_info sHyperVHIDDeviceModule = {
 	{
-		HYPERV_INPUT_DEVICE_MODULE_NAME,
+		HYPERV_HID_DEVICE_MODULE_NAME,
 		0,
 		NULL
 	},
@@ -323,9 +323,9 @@ static device_module_info sHyperVInputDeviceModule = {
 };
 
 
-static driver_module_info sHyperVInputDriverModule = {
+static driver_module_info sHyperVHIDDriverModule = {
 	{
-		HYPERV_INPUT_DRIVER_MODULE_NAME,
+		HYPERV_HID_DRIVER_MODULE_NAME,
 		0,
 		&std_ops
 	},
@@ -347,7 +347,7 @@ module_dependency module_dependencies[] = {
 
 
 module_info* modules[] = {
-	(module_info*)&sHyperVInputDriverModule,
-	(module_info*)&sHyperVInputDeviceModule,
+	(module_info*)&sHyperVHIDDriverModule,
+	(module_info*)&sHyperVHIDDeviceModule,
 	NULL
 };
