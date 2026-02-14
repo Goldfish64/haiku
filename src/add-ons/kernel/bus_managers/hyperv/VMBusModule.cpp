@@ -7,43 +7,6 @@
 #include "VMBusPrivate.h"
 
 
-static status_t
-hyperv_detect()
-{
-	CALLED();
-
-	// Check for hypervisor.
-	cpu_ent *cpu = get_cpu_struct();
-	if ((cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_HYPERVISOR) == 0) {
-		TRACE("No hypervisor detected\n");
-		return B_ERROR;
-	}
-
-	// Check for Hyper-V CPUID leaves.
-	cpuid_info cpuInfo;
-	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HYPERVISOR, 0);
-	if (cpuInfo.regs.eax < IA32_CPUID_LEAF_HV_IMP_LIMITS) {
-		TRACE("Not running on Hyper-V\n");
-		return B_ERROR;
-	}
-
-	// Check for Hyper-V signature.
-	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HV_INT_ID, 0);
-	if (cpuInfo.regs.eax != HV_CPUID_INTERFACE_ID) {
-		TRACE("Not running on Hyper-V\n");
-		return B_ERROR;
-	}
-
-#ifdef TRACE_HYPERV
-	get_cpuid(&cpuInfo, IA32_CPUID_LEAF_HV_SYS_ID, 0);
-	TRACE("Hyper-V version: %d.%d.%d [SP%d]\n", cpuInfo.regs.ebx >> 16, cpuInfo.regs.ebx & 0xFFFF,
-		cpuInfo.regs.eax, cpuInfo.regs.ecx);
-#endif
-
-	return B_OK;
-}
-
-
 static float
 vmbus_supports_device(device_node* parent)
 {
@@ -59,7 +22,7 @@ vmbus_supports_device(device_node* parent)
 	if (strcmp(bus, "root") != 0)
 		return 0.0f;
 
-	status_t status = hyperv_detect();
+	status_t status = vmbus_detect_hyperv();
 	if (status != B_OK)
 		return 0.0f;
 

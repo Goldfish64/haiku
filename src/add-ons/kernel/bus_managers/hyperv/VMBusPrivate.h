@@ -37,6 +37,8 @@
 #define ERROR(x...)			dprintf("\33[35mvmbus:\33[0m " x)
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
+status_t vmbus_detect_hyperv();
+
 class VMBus;
 
 typedef struct {
