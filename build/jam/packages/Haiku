@@ -144,6 +144,7 @@ AddNewDriversToPackage network :
 	virtio_net
 	;
 AddNewDriversToPackage input :
+	hyperv_hid
 	i2c_elan
 	virtio_input
 	;
@@ -152,6 +153,9 @@ AddNewDriversToPackage display :
 	;
 AddNewDriversToPackage audio hmulti :
 #	virtio_sound
+	;
+AddNewDriversToPackage hyperv :
+	hyperv_ic
 	;
 
 # legacy drivers
@@ -318,6 +322,7 @@ AddBootModuleSymlinksToPackage
 	dpc
 	efi_gpt
 	generic_ide_pci
+	hyperv@x86,x86_64
 	ide_isa@x86
 	isa@x86,x86_64
 	intel

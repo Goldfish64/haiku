@@ -1,0 +1,16 @@
+SubDir HAIKU_TOP src add-ons kernel drivers hyperv hyperv_ic ;
+
+SubDirC++Flags -fno-rtti ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders hyperv ;
+
+SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
+
+KernelAddon hyperv_ic :
+	Driver.cpp
+
+	ICBase.cpp
+	Heartbeat.cpp
+	HeartbeatModule.cpp
+	;
