@@ -7,7 +7,6 @@
 #include "VMBusDevicePrivate.h"
 
 
-
 VMBusDevice::VMBusDevice(device_node* node)
 	:
 	fNode(node),
@@ -54,6 +53,13 @@ VMBusDevice::~VMBusDevice()
 	mutex_destroy(&fLock);
 	if (fDPCHandle != NULL)
 		gDPC->delete_dpc_queue(fDPCHandle);
+}
+
+
+uint32
+VMBusDevice::GetBusVersion()
+{
+	return fVMBus->get_version(fVMBusCookie);
 }
 
 

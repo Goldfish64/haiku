@@ -80,6 +80,15 @@ vmbus_uninit_driver(void* driverCookie)
 }
 
 
+static uint32
+vmbus_get_version(hyperv_bus cookie)
+{
+	CALLED();
+	VMBus* vmbus = reinterpret_cast<VMBus*>(cookie);
+	return vmbus->GetVersion();
+}
+
+
 static status_t
 vmbus_open_channel(hyperv_bus cookie, uint32 channel, uint32 gpadl, uint32 rxOffset,
 	hyperv_bus_callback callback, void* callbackData)
@@ -158,6 +167,7 @@ hyperv_bus_interface gVMBusModule = {
 		NULL	// rescan bus
 	},
 
+	vmbus_get_version,
 	vmbus_open_channel,
 	vmbus_close_channel,
 	vmbus_allocate_gpadl,

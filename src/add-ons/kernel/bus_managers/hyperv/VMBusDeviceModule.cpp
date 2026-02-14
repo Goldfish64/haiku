@@ -47,8 +47,17 @@ vmbus_device_removed(void* _device)
 }
 
 
+static uint32
+vmbus_device_get_bus_version(hyperv_device cookie)
+{
+	CALLED();
+	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(cookie);
+	return device->GetBusVersion();
+}
+
+
 static status_t
-vmbus_open(hyperv_device cookie, uint32 txLength, uint32 rxLength,
+vmbus_device_open(hyperv_device cookie, uint32 txLength, uint32 rxLength,
 	hyperv_device_callback callback, void* callbackData)
 {
 	CALLED();
@@ -58,7 +67,7 @@ vmbus_open(hyperv_device cookie, uint32 txLength, uint32 rxLength,
 
 
 static void
-vmbus_close(hyperv_device cookie)
+vmbus_device_close(hyperv_device cookie)
 {
 	CALLED();
 	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(cookie);
@@ -67,7 +76,7 @@ vmbus_close(hyperv_device cookie)
 
 
 static status_t
-vmbus_write_packet(hyperv_device cookie, uint16 type, void* buffer,
+vmbus_device_write_packet(hyperv_device cookie, uint16 type, void* buffer,
 	uint32 length, bool responseRequired, uint64 transactionID)
 {
 	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(cookie);
@@ -76,7 +85,7 @@ vmbus_write_packet(hyperv_device cookie, uint16 type, void* buffer,
 
 
 static status_t
-vmbus_read_packet(hyperv_device cookie, vmbus_pkt_header* _header,
+vmbus_device_read_packet(hyperv_device cookie, vmbus_pkt_header* _header,
 	uint32* _headerLength, void* _buffer, uint32* _length)
 {
 	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(cookie);
@@ -116,8 +125,9 @@ hyperv_device_interface gVMBusDeviceModule = {
 		vmbus_device_removed
 	},
 
-	vmbus_open,
-	vmbus_close,
-	vmbus_write_packet,
-	vmbus_read_packet
+	vmbus_device_get_bus_version,
+	vmbus_device_open,
+	vmbus_device_close,
+	vmbus_device_write_packet,
+	vmbus_device_read_packet
 };

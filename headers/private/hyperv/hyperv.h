@@ -52,6 +52,7 @@ typedef void (*hyperv_device_callback)(void* data);
 typedef struct hyperv_bus_interface {
 	driver_module_info info;
 
+	uint32 (*get_version)(hyperv_bus cookie);
 	status_t (*open_channel)(hyperv_bus cookie, uint32 channel, uint32 gpadl,
 		uint32 rxOffset, hyperv_bus_callback callback, void* callbackData);
 	status_t (*close_channel)(hyperv_bus cookie, uint32 channel);
@@ -66,6 +67,7 @@ typedef struct hyperv_bus_interface {
 typedef struct hyperv_device_interface {
 	driver_module_info info;
 
+	uint32 (*get_bus_version)(hyperv_device cookie);
 	status_t (*open)(hyperv_device cookie, uint32 txLength, uint32 rxLength,
 		hyperv_device_callback callback, void* callbackData);
 	void (*close)(hyperv_device cookie);

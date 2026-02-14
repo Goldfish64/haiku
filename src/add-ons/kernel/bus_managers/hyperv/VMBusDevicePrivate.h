@@ -46,6 +46,7 @@ public:
 									~VMBusDevice();
 			status_t				InitCheck() const { return fStatus; }
 
+			uint32					GetBusVersion();
 			status_t				Open(uint32 txLength, uint32 rxLength,
 										hyperv_device_callback callback, void* callbackData);
 			void					Close();
