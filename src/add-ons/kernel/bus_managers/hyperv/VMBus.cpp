@@ -611,7 +611,7 @@ VMBus::_InitInterrupts()
 	if (status != B_OK)
 		return status;
 
-	uint8 irq;
+	uint8 irq = 0;
 	status = gACPI->walk_resources(acpiVMBusHandle, (ACPI_STRING)"_CRS",
 		_InterruptACPICallback, &irq);
 	if (status != B_OK)
@@ -624,7 +624,7 @@ VMBus::_InitInterrupts()
 	TRACE("VMBus irq interrupt line: %u, vector: %u\n", irq, fInterruptVector);
 	status = install_io_interrupt_handler(irq, _InterruptHandler, this, 0);
 	if (status != B_OK) {
-		ERROR("Can't install interrupt handler\n");
+		ERROR("Can't install interrupt handler for irq %u (%s)\n", irq, strerror(status));
 		return status;
 	}
 
