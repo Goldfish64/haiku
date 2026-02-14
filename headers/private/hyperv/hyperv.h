@@ -5,6 +5,7 @@
 #ifndef _HYPERV_H_
 #define _HYPERV_H_
 
+
 #include <device_manager.h>
 #include <KernelExport.h>
 
@@ -39,11 +40,13 @@
 #define HYPERV_PRETTYNAME_TIMESYNC			"Hyper-V Time Synchronization"
 #define HYPERV_PRETTYNAME_VSS				"Hyper-V Volume Shadow Copy"
 
+
 typedef void* hyperv_bus;
 typedef void* hyperv_device;
 
 typedef void (*hyperv_bus_callback)(void* data);
 typedef void (*hyperv_device_callback)(void* data);
+
 
 // Interface between the VMBus bus device driver, and the VMBus bus manager
 typedef struct hyperv_bus_interface {
@@ -58,6 +61,7 @@ typedef struct hyperv_bus_interface {
 	status_t (*signal_channel)(hyperv_bus cookie, uint32 channel);
 } hyperv_bus_interface;
 
+
 // Interface between the VMBus device driver, and the VMBus device bus manager
 typedef struct hyperv_device_interface {
 	driver_module_info info;
@@ -71,13 +75,15 @@ typedef struct hyperv_device_interface {
 		uint32* _headerLength, void* _buffer, uint32* _length);
 } hyperv_device_interface;
 
+
 // Device attributes for the VMBus device
 
 // Channel ID
 #define HYPERV_CHANNEL_ID_ITEM		"hyperv/channel"
-// Device type UUID
+// Device type GUID
 #define HYPERV_DEVICE_TYPE_ITEM		"hyperv/type"
-// Instance UUID
+// Instance GUID
 #define HYPERV_INSTANCE_ID_ITEM		"hyperv/instance"
+
 
 #endif // _HYPERV_H_

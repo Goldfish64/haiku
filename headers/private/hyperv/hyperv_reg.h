@@ -5,6 +5,7 @@
 #ifndef _HYPERV_REG_H_
 #define _HYPERV_REG_H_
 
+
 // Page sizes for Hyper-V are 4KB on all platforms
 #define HV_PAGE_SIZE			4096
 #define HV_PAGE_SHIFT			12
@@ -107,11 +108,13 @@
 #define IA32_MSR_HV_SINT_RSVD_MASK \
 	(IA32_MSR_HV_SINT_RSVD1_MASK | IA32_MSR_HV_SINT_RSVD2_MASK)
 
+
 enum { // Hyper-V message types
 	HYPERV_MSGTYPE_NONE				= 0x00000000,
 	HYPERV_MSGTYPE_CHANNEL			= 0x00000001,
 	HYPERV_MSGTYPE_TIMER_EXPIRED	= 0x80000010
 };
+
 
 enum { // Hypercall status
 	HYPERCALL_STATUS_SUCCESS						= 0x0000,
@@ -144,6 +147,7 @@ enum { // Hypercall status
 	HYPERCALL_STATUS_PARTIAL_PACKET					= 0x001F
 };
 
+
 // Slow memory-based hypercall for VMBus messaging
 #define HYPERCALL_POST_MESSAGE			0x0005C
 // Fast register-based hypercall for VMBus events
@@ -155,6 +159,7 @@ enum { // Hypercall status
 // Maximum hypercall retry count
 #define HYPERCALL_MAX_RETRY_COUNT		20
 
+
 // Hypercall post message input parameters
 // https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/hypercalls/hvcallpostmessage
 typedef struct {
@@ -164,6 +169,7 @@ typedef struct {
 	uint32	data_size;
 	uint8	data[HYPERCALL_MAX_DATA_SIZE];
 } _PACKED hypercall_post_msg_input;
+
 
 #define HYPERV_SYNIC_MAX_INTS		16
 
@@ -175,6 +181,7 @@ typedef struct {
 // Size of SynIC message data
 #define HV_MESSAGE_DATA_SIZE		240
 #define HV_MESSAGE_SIZE 			256
+
 
 typedef struct { // Per-interrupt message data
 	uint32	message_type;
@@ -192,9 +199,11 @@ typedef struct { // Per-interrupt message data
 	uint8	data[HV_MESSAGE_DATA_SIZE];
 } _PACKED hv_message;
 
+
 typedef struct { // All interrupts message data
 	hv_message	interrupts[HYPERV_SYNIC_MAX_INTS];
 } _PACKED hv_message_page;
+
 
 // SynIC event flags
 // https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/inter-partition-communication#synic-event-flags
@@ -203,6 +212,7 @@ typedef struct { // All interrupts message data
 #define HV_EVENT_FLAGS_SIZE		256
 #define HV_EVENT_FLAGS_COUNT	(HV_EVENT_FLAGS_SIZE * 8)
 
+
 typedef struct { // Per-interrupt event flags
 	union {
 		uint8	flags[HV_EVENT_FLAGS_SIZE];
@@ -210,9 +220,11 @@ typedef struct { // Per-interrupt event flags
 	};
 } _PACKED hv_event_flags;
 
+
 typedef struct { // All interrupts event flags
 	hv_event_flags	interrupts[HYPERV_SYNIC_MAX_INTS];
 } _PACKED hv_event_flags_page;
+
 
 // Haiku-specific version info
 #define HYPERV_HAIKU_BUILD		0ULL

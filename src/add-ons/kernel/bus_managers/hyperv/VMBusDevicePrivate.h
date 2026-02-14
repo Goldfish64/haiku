@@ -93,4 +93,5 @@ private:
 			hyperv_bus				fVMBusCookie;
 };
 
+
 #endif // _VMBUS_DEVICE_PRIVATE_H_

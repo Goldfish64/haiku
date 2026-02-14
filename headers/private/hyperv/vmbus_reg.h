@@ -5,6 +5,7 @@
 #ifndef _VMBUS_REG_H_
 #define _VMBUS_REG_H_
 
+
 // HID of VMBus ACPI device
 // This is normally just "VMBus", but acpica seems to need all caps
 #define VMBUS_ACPI_HID_NAME		"VMBUS"
@@ -60,6 +61,7 @@
 #define VMBUS_TYPE_TIMESYNC			"9527e630-d0ae-497b-adce-e80ab0175caf"
 #define VMBUS_TYPE_VSS				"35fa2e29-ea23-4236-96ae-3a6ebacba440"
 
+
 typedef struct {
 	uint32	data1;
 	uint16	data2;
@@ -67,14 +69,17 @@ typedef struct {
 	uint8	data4[8];
 } _PACKED vmbus_guid_t;
 
+
 typedef struct { // VMBus GPADL range descriptor
 	uint32	length;
 	uint32	offset;
 	uint64	page_nums[];
 } _PACKED vmbus_gpadl_range;
 
+
 #define VMBUS_GPADL_NULL		0
 #define VMBUS_GPADL_MAX_PAGES	8192
+
 
 typedef struct { // VMBus event flags
 	hv_event_flags	rx_event_flags;
@@ -82,6 +87,7 @@ typedef struct { // VMBus event flags
 	hv_event_flags	tx_event_flags;
 	uint8			reserved2[(HV_PAGE_SIZE / 2) - sizeof(tx_event_flags)];
 } _PACKED vmbus_event_flags;
+
 
 enum { // VMBus message type
 	VMBUS_MSGTYPE_INVALID					= 0,
@@ -106,10 +112,12 @@ enum { // VMBus message type
 	VMBUS_MSGTYPE_MAX
 };
 
+
 typedef struct { // VMBus message header
 	uint32	type;
 	uint32	reserved;
 } _PACKED vmbus_msg_header;
+
 
 typedef struct { // VMBus channel offer message from Hyper-V
 	vmbus_msg_header header;
@@ -145,19 +153,23 @@ typedef struct { // VMBus channel offer message from Hyper-V
 	uint32	connection_id;
 } _PACKED vmbus_msg_channel_offer;
 
+
 typedef struct { // VMBus rescind channel offer message from Hyper-V
 	vmbus_msg_header header;
 
 	uint32	channel_id;
 } _PACKED vmbus_msg_rescind_channel_offer;
 
+
 typedef struct { // VMBus request channels message to Hyper-V
 	vmbus_msg_header header;
 } _PACKED vmbus_msg_request_channels;
 
+
 typedef struct { // VMBus request channels done message from Hyper-V
 	vmbus_msg_header header;
 } _PACKED vmbus_msg_request_channels_done;
+
 
 typedef struct { // VMBus open channel message to Hyper-V
 	vmbus_msg_header header;
@@ -170,6 +182,7 @@ typedef struct { // VMBus open channel message to Hyper-V
 	uint8	user_data[VMBUS_CHANNEL_OFFER_MAX_USER_BYTES];
 } _PACKED vmbus_msg_open_channel;
 
+
 typedef struct { // VMBus open channel response message from Hyper-V
 	vmbus_msg_header header;
 
@@ -178,11 +191,13 @@ typedef struct { // VMBus open channel response message from Hyper-V
 	uint32	result;
 } _PACKED vmbus_msg_open_channel_resp;
 
+
 typedef struct { // VMBus close channel message to Hyper-V
 	vmbus_msg_header header;
 
 	uint32	channel_id;
 } _PACKED vmbus_msg_close_channel;
+
 
 typedef struct { // VMBus create GPADL message to Hyper-V
 	vmbus_msg_header header;
@@ -196,6 +211,7 @@ typedef struct { // VMBus create GPADL message to Hyper-V
 #define VMBUS_MSG_CREATE_GPADL_MAX_PAGES \
 	((HYPERCALL_MAX_DATA_SIZE - sizeof(vmbus_msg_create_gpadl)) / sizeof(uint64))
 
+
 typedef struct { // VMBus create GPADL additional pages message to Hyper-V
 	vmbus_msg_header header;
 
@@ -206,6 +222,7 @@ typedef struct { // VMBus create GPADL additional pages message to Hyper-V
 #define VMBUS_MSG_CREATE_GPADL_ADDT_MAX_PAGES \
 	((HYPERCALL_MAX_DATA_SIZE - sizeof(vmbus_msg_create_gpadl_addt)) / sizeof(uint64))
 
+
 typedef struct { // VMBus create GPADL response message from Hyper-V
 	vmbus_msg_header header;
 
@@ -214,6 +231,7 @@ typedef struct { // VMBus create GPADL response message from Hyper-V
 	uint32	result;
 } _PACKED vmbus_msg_create_gpadl_resp;
 
+
 typedef struct { // VMBus free GPADL message to Hyper-V
 	vmbus_msg_header header;
 
@@ -221,17 +239,20 @@ typedef struct { // VMBus free GPADL message to Hyper-V
 	uint32	gpadl_id;
 } _PACKED vmbus_msg_free_gpadl;
 
+
 typedef struct { // VMBus free GPADL message from Hyper-V
 	vmbus_msg_header header;
 
 	uint32	gpadl_id;
 } _PACKED vmbus_msg_free_gpadl_resp;
 
+
 typedef struct { // VMBus free channel message to Hyper-V
 	vmbus_msg_header header;
 
 	uint32	channel_id;
 } _PACKED vmbus_msg_free_channel;
+
 
 typedef struct { // VMBus connect message to Hyper-V
 	vmbus_msg_header header;
@@ -244,6 +265,7 @@ typedef struct { // VMBus connect message to Hyper-V
 	uint64 	monitor2_physaddr;
 } _PACKED vmbus_msg_connect;
 
+
 typedef struct { // VMBus connect response message from Hyper-V
 	vmbus_msg_header header;
 
@@ -253,9 +275,11 @@ typedef struct { // VMBus connect response message from Hyper-V
 	uint32	connection_id;
 } _PACKED vmbus_msg_connect_resp;
 
+
 typedef struct { // VMBus disconnect message to Hyper-V
 	vmbus_msg_header header;
 } _PACKED vmbus_msg_disconnect;
+
 
 typedef union { // VMBus combined message
 	vmbus_msg_header	header;
@@ -277,6 +301,7 @@ typedef union { // VMBus combined message
 	vmbus_msg_connect_resp				connect_resp;
 	vmbus_msg_disconnect				disconnect;
 } _PACKED vmbus_msg;
+
 
 typedef struct { // VMBus ring buffer structure
 	volatile uint32	write_index;
@@ -302,6 +327,7 @@ typedef struct { // VMBus ring buffer structure
 } _PACKED vmbus_ring_buffer;
 HV_STATIC_ASSERT(sizeof(vmbus_ring_buffer) == HV_PAGE_SIZE, "vmbus_ring_buffer size mismatch");
 
+
 enum { // VMBus packet types
 	VMBUS_PKTTYPE_INVALID					= 0,
 	VMBUS_PKTTYPE_SYNCH						= 1,
@@ -320,10 +346,12 @@ enum { // VMBus packet types
 	VMBUS_PKTTYPE_MAX
 };
 
+
 #define VMBUS_PKT_FLAGS_RESPONSE_REQUIRED		(1 << 0)
 
 #define VMBUS_PKT_SIZE_SHIFT	3
 #define VMBUS_PKT_ALIGN(x)		(((x) + (sizeof(uint64) - 1)) &~ (sizeof(uint64) - 1))
+
 
 typedef struct { // VMBus packet header
 	uint16	type;
@@ -332,5 +360,6 @@ typedef struct { // VMBus packet header
 	uint16	flags;
 	uint64	transaction_id;
 } _PACKED vmbus_pkt_header;
+
 
 #endif // _VMBUS_REG_H_

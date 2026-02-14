@@ -48,6 +48,7 @@ typedef struct {
 	hv_event_flags_page*			event_flags;
 } VMBusPerCPUInfo;
 
+
  // VMBus message info used for transactions
 struct VMBusMsgInfo : DoublyLinkedListLinkImpl<VMBusMsgInfo> {
 	hypercall_post_msg_input	post_msg;
@@ -60,6 +61,7 @@ struct VMBusMsgInfo : DoublyLinkedListLinkImpl<VMBusMsgInfo> {
 };
 typedef DoublyLinkedList<VMBusMsgInfo> VMBusMsgInfoList;
 
+
 // Channel GPADL list
 struct VMBusGPADLInfo : DoublyLinkedListLinkImpl<VMBusGPADLInfo> {
 	uint32	gpadl_id;
@@ -67,6 +69,7 @@ struct VMBusGPADLInfo : DoublyLinkedListLinkImpl<VMBusGPADLInfo> {
 	area_id areaid;
 };
 typedef DoublyLinkedList<VMBusGPADLInfo> VMBusGPADLInfoList;
+
 
 // Active channel info
 struct VMBusChannelInfo : DoublyLinkedListLinkImpl<VMBusChannelInfo> {
@@ -85,7 +88,9 @@ struct VMBusChannelInfo : DoublyLinkedListLinkImpl<VMBusChannelInfo> {
 };
 typedef DoublyLinkedList<VMBusChannelInfo> VMBusChannelInfoList;
 
+
 typedef void (VMBus::*VMBusEventFlagsHandler)(int32 cpu);
+
 
 class VMBus {
 public:
@@ -174,5 +179,6 @@ private:
 			sem_id					fChannelQueueSem;
 			thread_id				fChannelQueueThread;
 };
+
 
 #endif // VMBUS_PRIVATE_H

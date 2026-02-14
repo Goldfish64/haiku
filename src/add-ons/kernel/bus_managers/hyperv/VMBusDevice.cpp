@@ -403,10 +403,9 @@ VMBusDevice::_WriteTXData(const iovec txData[], size_t txDataCount)
 	// Signal Hyper-V if required; signaling is only needed if the ring buffer is changing state
 	// from empty to having some amount of data. It does not need a signal if the buffer already
 	// has some amount of data, and we are just adding more
-
 	memory_read_barrier();
-	if (fTXRing->interrupt_mask == 0 && writeIndexOld ==
-			(uint32) atomic_get((int32*)&fTXRing->read_index)) {
+	if (fTXRing->interrupt_mask == 0 && writeIndexOld
+			== (uint32) atomic_get((int32*)&fTXRing->read_index)) {
 		fTXRing->guest_to_host_interrupt_count++;
 		fVMBus->signal_channel(fVMBusCookie, fChannelID);
 	}
