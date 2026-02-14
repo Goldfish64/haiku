@@ -16,7 +16,7 @@
 #include <hyperv_reg.h>
 #include <vmbus_reg.h>
 
-#include "HyperVPrivate.h"
+#include "Driver.h"
 
 #define TRACE_VMBUS_DEVICE
 #ifdef TRACE_VMBUS_DEVICE

@@ -2,14 +2,16 @@
  * Copyright 2026 John Davis
  * All rights reserved. Distributed under the terms of the MIT License.
  */
-#ifndef _HYPERV_PRIVATE_H_
-#define _HYPERV_PRIVATE_H_
+#ifndef _HYPERV_DRIVER_H_
+#define _HYPERV_DRIVER_H_
 
 #include <new>
 #include <stdio.h>
 
 #include <ACPI.h>
+#include <device_manager.h>
 #include <dpc.h>
+#include <KernelExport.h>
 
 #include <hyperv.h>
 
@@ -20,4 +22,4 @@ extern dpc_module_info* gDPC;
 extern hyperv_bus_interface gVMBusModule;
 extern hyperv_device_interface gVMBusDeviceModule;
 
-#endif // _HYPERV_PRIVATE_H_
+#endif // _HYPERV_DRIVER_H_

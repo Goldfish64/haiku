@@ -10,11 +10,10 @@ SubDirHdrs $(HAIKU_TOP) src add-ons kernel bus_managers acpi acpica include ;
 SubDirHdrs $(HAIKU_TOP) src add-ons kernel bus_managers acpi acpica include platform ;
 
 KernelAddon hyperv :
-	HyperVModule.cpp
+	Driver.cpp
 
 	VMBus.cpp
 	VMBusModule.cpp
-
 	VMBusDevice.cpp
 	VMBusDeviceModule.cpp
 
