@@ -18,7 +18,7 @@
 
 #include "Driver.h"
 
-#define TRACE_VMBUS_DEVICE
+//#define TRACE_VMBUS_DEVICE
 #ifdef TRACE_VMBUS_DEVICE
 #	define TRACE(x...) dprintf("\33[36mvmbus_device:\33[0m " x)
 #else
