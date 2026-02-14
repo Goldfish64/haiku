@@ -12,7 +12,7 @@
 #include <vmbus_reg.h>
 
 #define HYPERV_VMBUS_MODULE_NAME		"bus_managers/hyperv/root/driver_v1"
-#define HYPERV_DEVICE_MODULE_NAME		"bus_managers/hyperv/device/driver_v1"
+#define HYPERV_DEVICE_MODULE_NAME		"bus_managers/hyperv/device/v1"
 
 #define HYPERV_BUS_NAME					"hyperv"
 
