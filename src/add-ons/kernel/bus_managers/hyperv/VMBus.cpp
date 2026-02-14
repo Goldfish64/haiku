@@ -677,10 +677,29 @@ VMBus::_Interrupt()
 void
 VMBus::_InterruptEventFlags(int32 cpu)
 {
-	// Check the SynIC event flags directly
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+
 	acquire_spinlock(&fChannelsSpinlock);
 
+	// Check the SynIC event flags directly
+	uint32* eventFlags = fCPUData[cpu].event_flags->interrupts[VMBUS_SINT_MESSAGE].flags32;
+	uint32 flags = (atomic_get_and_set((int32*)eventFlags, 0)) >> 1;
+	for (uint32 i = 1; i <= fHighestChannelID; i++) {
+		if ((i % 32) == 0)
+			flags = atomic_get_and_set((int32*)eventFlags++, 0);
+
+		if (flags & 0x1 && fChannels[i] != NULL && fChannels[i]->callback != NULL)
+			fChannels[i]->callback(fChannels[i]->callback_data);
+		flags >>= 1;
+	}
+
 	release_spinlock(&fChannelsSpinlock);
+
+	#pragma GCC diagnostic pop
 }
 
 
