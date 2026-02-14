@@ -217,10 +217,17 @@ VMBusDevice::PeekPacket(void* _buffer, uint32 length)
 		return B_DEV_NOT_READY;
 	}
 
-	uint32 readIndex = (uint32) atomic_get((int32*)&fRXRing->read_index);
-	_ReadRX(readIndex, _buffer, length);
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+	uint32 readIndex = atomic_get((int32*)&fRXRing->read_index);
 	TRACE_TX("Channel %u RX peek read idx 0x%X write idx 0x%X\n", fChannelID, readIndex,
-		(uint32) atomic_get((int32*)&fRXRing->write_index));
+		atomic_get((int32*)&fRXRing->write_index));
+	#pragma GCC diagnostic pop
+
+	_ReadRX(readIndex, _buffer, length);
 
 	release_spinlock(&fRXLock);
 	restore_interrupts(state);
@@ -284,10 +291,17 @@ VMBusDevice::ReadPacket(vmbus_pkt_header* _header, uint32* _headerLength,
 		return B_DEV_NOT_READY;
 	}
 
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+
 	// Get the current read index
 	uint32 readIndexNew = (uint32) atomic_get((int32*)&fRXRing->read_index);
 	TRACE_TX("Channel %u RX old read idx 0x%X write idx 0x%X\n", fChannelID, readIndexNew,
-		(uint32) atomic_get((int32*)&fRXRing->write_index));
+		atomic_get((int32*)&fRXRing->write_index));
+	#pragma GCC diagnostic pop
 
 	// Read the header, data, and seek past the shifted read index
 	if (_header != NULL && headerLength > sizeof(vmbus_pkt_header))
@@ -296,14 +310,21 @@ VMBusDevice::ReadPacket(vmbus_pkt_header* _header, uint32* _headerLength,
 		readIndexNew = _SeekRX(readIndexNew, headerLength);
 	readIndexNew = _ReadRX(readIndexNew, _buffer, dataLength);
 	readIndexNew = _SeekRX(readIndexNew, sizeof(uint64));
+	memory_write_barrier();
+
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
 
 	// Write the new read index to the RX ring
-	memory_write_barrier();
 	atomic_set((int32*)&fRXRing->read_index, (int32)readIndexNew);
 
 	TRACE_TX("Channel %u RX new read idx 0x%X write idx 0x%X\n", fChannelID,
-		(uint32) atomic_get((int32*)&fRXRing->read_index),
-		(uint32) atomic_get((int32*)&fRXRing->write_index));
+		atomic_get((int32*)&fRXRing->read_index),
+		atomic_get((int32*)&fRXRing->write_index));
+	#pragma GCC diagnostic pop
 
 	release_spinlock(&fRXLock);
 	restore_interrupts(state);
@@ -331,8 +352,14 @@ VMBusDevice::_DPCHandler(void* arg)
 inline uint32
 VMBusDevice::_AvailableTX()
 {
-	uint32 readIndex = (uint32) atomic_get((int32*)&fTXRing->read_index);
-	uint32 writeIndex = (uint32) atomic_get((int32*)&fTXRing->write_index);
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+	uint32 readIndex = atomic_get((int32*)&fTXRing->read_index);
+	uint32 writeIndex = atomic_get((int32*)&fTXRing->write_index);
+	#pragma GCC diagnostic pop
 
 	return (writeIndex >= readIndex)
 		? (fTXRingLength - (writeIndex - readIndex))
@@ -380,10 +407,17 @@ VMBusDevice::_WriteTXData(const iovec txData[], size_t txDataCount)
 		return B_DEV_NOT_READY;
 	}
 
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+
 	// Get the current write index
-	uint32 writeIndexOld = (uint32) atomic_get((int32*)&fTXRing->write_index);
+	uint32 writeIndexOld = atomic_get((int32*)&fTXRing->write_index);
 	TRACE_TX("Channel %u TX old write idx 0x%X read idx 0x%X\n", fChannelID, writeIndexOld,
-		(uint32) atomic_get((int32*)&fTXRing->read_index));
+		atomic_get((int32*)&fTXRing->read_index));
+	#pragma GCC diagnostic pop
 
 	// Copy the data to the TX ring
 	uint32 writeIndexNew = writeIndexOld;
@@ -394,11 +428,16 @@ VMBusDevice::_WriteTXData(const iovec txData[], size_t txDataCount)
 	// Write the old write index immediately after the newly written data, shifted over by 32 bits
 	writeIndexOldShifted = static_cast<uint64>(writeIndexOld) << 32;
 	writeIndexNew = _WriteTX(writeIndexNew, &writeIndexOldShifted, sizeof(writeIndexOldShifted));
+	memory_write_barrier();
+
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
 
 	// Write the new write index to the TX ring
-	memory_write_barrier();
 	atomic_set((int32*)&fTXRing->write_index, (int32)writeIndexNew);
-
 	TRACE_TX("Channel %u TX new write idx 0x%X read idx 0x%X\n", fChannelID,
 		(uint32) atomic_get((int32*)&fTXRing->write_index),
 		(uint32) atomic_get((int32*)&fTXRing->read_index));
@@ -415,6 +454,7 @@ VMBusDevice::_WriteTXData(const iovec txData[], size_t txDataCount)
 		fTXRing->guest_to_host_interrupt_count++;
 		fVMBus->signal_channel(fVMBusCookie, fChannelID);
 	}
+	#pragma GCC diagnostic pop
 
 	return B_OK;
 }
@@ -423,8 +463,14 @@ VMBusDevice::_WriteTXData(const iovec txData[], size_t txDataCount)
 inline uint32
 VMBusDevice::_AvailableRX()
 {
-	uint32 readIndex = (uint32) atomic_get((int32*)&fRXRing->read_index);
-	uint32 writeIndex = (uint32) atomic_get((int32*)&fRXRing->write_index);
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+	uint32 readIndex = atomic_get((int32*)&fRXRing->read_index);
+	uint32 writeIndex = atomic_get((int32*)&fRXRing->write_index);
+	#pragma GCC diagnostic pop
 
 	return fRXRingLength - ((writeIndex >= readIndex)
 		? (fRXRingLength - (writeIndex - readIndex))

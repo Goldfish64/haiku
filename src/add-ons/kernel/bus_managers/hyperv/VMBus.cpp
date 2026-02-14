@@ -569,7 +569,13 @@ VMBus::SignalChannel(uint32 channel)
 	restore_interrupts(state);
 
 	if (!dedicatedInterrupt) {
-		atomic_or(&fEventFlagsPage->tx_event_flags.iflags32[channel / 32], 1 << (channel & 0x1F));
+		// GCC marks the packed accesses as possibly unaligned
+		// All structs containing these members must be aligned for Hyper-V, so
+		// this error can be ignored
+		#pragma GCC diagnostic push
+		#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+		atomic_or((int32*)&fEventFlagsPage->tx_event_flags.flags32[channel / 32], 1 << (channel & 0x1F));
+		#pragma GCC diagnostic pop
 	}
 
 	uint16 hypercallStatus = _HypercallSignalEvent(connectionID);
@@ -681,18 +687,24 @@ VMBus::_InterruptEventFlags(int32 cpu)
 void
 VMBus::_InterruptEventFlagsLegacy(int32 cpu)
 {
+	// GCC marks the packed accesses as possibly unaligned
+	// All structs containing these members must be aligned for Hyper-V, so
+	// this error can be ignored
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+
 	// Check the SynIC event flags first, then the VMBus RX event flags
 	hv_event_flags_page* eventFlags = fCPUData[cpu].event_flags;
-	if (atomic_get_and_set(eventFlags->interrupts[VMBUS_SINT_MESSAGE].iflags32, 0) == 0)
+	if (atomic_get_and_set((int32*)eventFlags->interrupts[VMBUS_SINT_MESSAGE].flags32, 0) == 0)
 		return;
 
 	acquire_spinlock(&fChannelsSpinlock);
 
-	int32* chanRXFlags = fEventFlagsPage->rx_event_flags.iflags32;
-	uint32 flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags, 0)) >> 1;
+	uint32* rxFlags = fEventFlagsPage->rx_event_flags.flags32;
+	uint32 flags = atomic_get_and_set((int32*)rxFlags, 0) >> 1;
 	for (uint32 i = 1; i <= fHighestChannelID; i++) {
 		if ((i % 32) == 0)
-			flags = static_cast<uint32>(atomic_get_and_set(chanRXFlags++, 0));
+			flags = atomic_get_and_set((int32*)rxFlags++, 0);
 
 		if (flags & 0x1 && fChannels[i] != NULL && fChannels[i]->callback != NULL)
 			fChannels[i]->callback(fChannels[i]->callback_data);
@@ -700,6 +712,8 @@ VMBus::_InterruptEventFlagsLegacy(int32 cpu)
 	}
 
 	release_spinlock(&fChannelsSpinlock);
+
+	#pragma GCC diagnostic pop
 }
 
 
