@@ -64,7 +64,7 @@ typedef struct hyperv_device_interface {
 
 	status_t (*open)(hyperv_device cookie, uint32 txLength, uint32 rxLength,
 		hyperv_device_callback callback, void* callbackData);
-	status_t (*close)(hyperv_device cookie);
+	void (*close)(hyperv_device cookie);
 	status_t (*write_packet)(hyperv_device cookie, uint16 type, void* buffer,
 		uint32 length, bool responseRequired, uint64 transactionID);
 	status_t (*read_packet)(hyperv_device cookie, vmbus_pkt_header* _header,

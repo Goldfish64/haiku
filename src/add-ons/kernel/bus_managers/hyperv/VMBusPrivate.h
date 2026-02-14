@@ -134,6 +134,8 @@ private:
 			status_t				_RequestChannels();
 	static	status_t				_ChannelQueueThreadHandler(void* arg);
 			status_t				_ChannelQueueThread();
+			status_t				_CreateChannel(VMBusChannelInfo* channelInfo);
+			void					_FreeChannel(VMBusChannelInfo* channelInfo);
 	inline	uint32					_GetGPADLHandle();
 
 private:

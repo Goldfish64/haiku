@@ -256,8 +256,44 @@ VMBus::OpenChannel(uint32 channel, uint32 gpadl, uint32 rxOffset,
 status_t
 VMBus::CloseChannel(uint32 channel)
 {
-	// TODO: Need to implement
-	return B_ERROR;
+	// Channel must be valid
+	if (channel >= fMaxChannelsCount)
+		return B_BAD_VALUE;
+
+	cpu_status state = disable_interrupts();
+	acquire_spinlock(&fChannelsSpinlock);
+	VMBusChannelInfo* channelInfo = fChannels[channel];
+	release_spinlock(&fChannelsSpinlock);
+	restore_interrupts(state);
+
+	if (channelInfo == NULL)
+		return B_NAME_NOT_FOUND;
+
+	status_t status = mutex_lock(&channelInfo->lock);
+	if (status != B_OK)
+		return status;
+
+	// Create the close channel message
+	VMBusMsgInfo* msgInfo = _AllocMsgInfo();
+	if (msgInfo == NULL) {
+		mutex_unlock(&channelInfo->lock);
+		return B_NO_MEMORY;
+	}
+
+	vmbus_msg_close_channel* message = &msgInfo->message->close_channel;
+	message->header.type = VMBUS_MSGTYPE_CLOSE_CHANNEL;
+	message->header.reserved = 0;
+
+	message->channel_id = channel;
+
+	TRACE("Closing channel %u\n", channel);
+
+	// Send close channel message to Hyper-V
+	status = _SendMessage(msgInfo);
+	_ReturnFreeMsgInfo(msgInfo);
+
+	mutex_unlock(&channelInfo->lock);
+	return status;
 }
 
 
@@ -449,8 +485,72 @@ VMBus::AllocateGPADL(uint32 channel, uint32 length, void** _buffer, uint32* _gpa
 status_t
 VMBus::FreeGPADL(uint32 channel, uint32 gpadl)
 {
-	// TODO: Need to implement
-	return B_ERROR;
+	// Channel must be valid
+	if (channel >= fMaxChannelsCount)
+		return B_BAD_VALUE;
+
+	cpu_status state = disable_interrupts();
+	acquire_spinlock(&fChannelsSpinlock);
+	VMBusChannelInfo* channelInfo = fChannels[channel];
+	release_spinlock(&fChannelsSpinlock);
+	restore_interrupts(state);
+
+	if (channelInfo == NULL)
+		return B_NAME_NOT_FOUND;
+
+	status_t status = mutex_lock(&channelInfo->lock);
+	if (status != B_OK)
+		return status;
+
+	// Get the GPADL info
+	bool foundGPADL = false;
+	VMBusGPADLInfo* gpadlInfo;
+	VMBusGPADLInfoList::Iterator iterator = channelInfo->gpadls.GetIterator();
+	while (iterator.HasNext()) {
+		gpadlInfo = iterator.Next();
+		if (gpadlInfo->gpadl_id == gpadl) {
+			foundGPADL = true;
+			break;
+		}
+	}
+
+	if (!foundGPADL) {
+		mutex_unlock(&channelInfo->lock);
+		return B_NAME_NOT_FOUND;
+	}
+
+	// Create the GPADL free message
+	VMBusMsgInfo* msgInfo = _AllocMsgInfo();
+	if (msgInfo == NULL) {
+		mutex_unlock(&channelInfo->lock);
+		return B_NO_MEMORY;
+	}
+
+	vmbus_msg_free_gpadl* message = &msgInfo->message->free_gpadl;
+	message->header.type = VMBUS_MSGTYPE_FREE_GPADL;
+	message->header.reserved = 0;
+
+	message->channel_id = channel;
+	message->gpadl_id = gpadl;
+
+	_AddActiveMsgInfo(msgInfo, VMBUS_MSGTYPE_FREE_GPADL_RESPONSE, gpadl);
+	status = _SendMessage(msgInfo);
+	if (status != B_OK) {
+		_RemoveActiveMsgInfo(msgInfo);
+		_ReturnFreeMsgInfo(msgInfo);
+		mutex_unlock(&channelInfo->lock);
+		return status;
+	}
+
+	_ReturnFreeMsgInfo(msgInfo);
+
+	// Remove and free the GPADL buffer
+	channelInfo->gpadls.Remove(gpadlInfo);
+	delete_area(gpadlInfo->areaid);
+	delete gpadlInfo;
+
+	mutex_unlock(&channelInfo->lock);
+	return B_OK;
 }
 
 
@@ -662,7 +762,16 @@ VMBus::_MessageDPC(int32_t cpu)
 				channelInfo->node = NULL;
 				channelInfo->callback = NULL;
 
-				// Add new channel to list and signal the channel handler thread
+				// Add the channel to the list of active channels
+				cpu_status state = disable_interrupts();
+				acquire_spinlock(&fChannelsSpinlock);
+				if (fHighestChannelID < offerMessage->channel_id)
+					fHighestChannelID = offerMessage->channel_id;
+				fChannels[offerMessage->channel_id] = channelInfo;
+				release_spinlock(&fChannelsSpinlock);
+				restore_interrupts(state);
+
+				// Add new channel to offer queue and signal the channel handler thread
 				mutex_lock(&fChannelQueueLock);
 				fChannelOfferList.Add(channelInfo);
 				mutex_unlock(&fChannelQueueLock);
@@ -670,10 +779,31 @@ VMBus::_MessageDPC(int32_t cpu)
 				release_sem_etc(fChannelQueueSem, 1, B_DO_NOT_RESCHEDULE);
 			}
 		} else {
-			TRACE("Invalid VMBus channel ID %u received!\n", offerMessage->channel_id);
+			TRACE("Invalid VMBus channel ID %u offer received!\n", offerMessage->channel_id);
 		}
 	} else if (message->header.type == VMBUS_MSGTYPE_RESCIND_CHANNEL_OFFER) {
-		// TODO: Implement channel removals
+		vmbus_msg_rescind_channel_offer* rescindMessage = &message->rescind_channel_offer;
+
+		if (rescindMessage->channel_id < fMaxChannelsCount) {
+			// Remove the channel from the list of active channels
+			cpu_status state = disable_interrupts();
+			acquire_spinlock(&fChannelsSpinlock);
+			VMBusChannelInfo* channelInfo = fChannels[rescindMessage->channel_id];
+			fChannels[rescindMessage->channel_id] = NULL;
+			release_spinlock(&fChannelsSpinlock);
+			restore_interrupts(state);
+
+			// Add removed channel to rescind queue and signal the channel handler thread
+			if (channelInfo != NULL) {
+				mutex_lock(&fChannelQueueLock);
+				fChannelRescindList.Add(channelInfo);
+				mutex_unlock(&fChannelQueueLock);
+
+				release_sem_etc(fChannelQueueSem, 1, B_DO_NOT_RESCHEDULE);
+			}
+		} else {
+			TRACE("Invalid VMBus channel ID %u rescind received!\n", rescindMessage->channel_id);
+		}
 	} else {
 		uint32 respData = 0;
 		switch (message->header.type) {
@@ -997,82 +1127,117 @@ status_t
 VMBus::_ChannelQueueThread()
 {
 	while (acquire_sem(fChannelQueueSem) == B_OK) {
-
 		// Fetch the next added and/or removed channels
 		mutex_lock(&fChannelQueueLock);
 		VMBusChannelInfo* newChannel = fChannelOfferList.RemoveHead();
 		VMBusChannelInfo* oldChannel = fChannelRescindList.RemoveHead();
 		mutex_unlock(&fChannelQueueLock);
 
-		// Add and/or remove the channels from the active list
-		cpu_status state = disable_interrupts();
-		acquire_spinlock(&fChannelsSpinlock);
-
-		if (newChannel != NULL) {
-			fChannels[newChannel->channel_id] = newChannel;
-			if (fHighestChannelID < newChannel->channel_id)
-				fHighestChannelID = newChannel->channel_id;
-		}
-		if (oldChannel != NULL)
-			fChannels[oldChannel->channel_id] = NULL;
-
-		release_spinlock(&fChannelsSpinlock);
-		restore_interrupts(state);
-
 		// Handle new channel registration
 		if (newChannel != NULL) {
-			char typeStr[37];
-			char instanceStr[37];
-
-			snprintf(typeStr, sizeof (typeStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-				newChannel->type_id.data1, newChannel->type_id.data2, newChannel->type_id.data3,
-				newChannel->type_id.data4[0], newChannel->type_id.data4[1], newChannel->type_id.data4[2],
-				newChannel->type_id.data4[3], newChannel->type_id.data4[4], newChannel->type_id.data4[5],
-				newChannel->type_id.data4[6], newChannel->type_id.data4[7]);
-			snprintf(instanceStr, sizeof (instanceStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-				newChannel->instance_id.data1, newChannel->instance_id.data2, newChannel->instance_id.data3,
-				newChannel->instance_id.data4[0], newChannel->instance_id.data4[1],
-				newChannel->instance_id.data4[2], newChannel->instance_id.data4[3],
-				newChannel->instance_id.data4[4], newChannel->instance_id.data4[5],
-				newChannel->instance_id.data4[6], newChannel->instance_id.data4[7]);
-			TRACE("Registering VMBus channel %u type %s inst %s\n", newChannel->channel_id,
-				typeStr, instanceStr);
-
-			// Get the pretty name
-			char prettyName[sizeof (HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT) + 8];
-			snprintf(prettyName, sizeof (prettyName), HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT,
-				newChannel->channel_id);
-
-			device_attr attributes[] = {
-				{ B_DEVICE_BUS, B_STRING_TYPE,
-					{ .string = HYPERV_BUS_NAME }},
-				{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-					{ .string = prettyName }},
-				{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
-					{ .ui32 = newChannel->channel_id }},
-				{ HYPERV_DEVICE_TYPE_ITEM, B_STRING_TYPE,
-					{ .string = typeStr }},
-				{ HYPERV_INSTANCE_ID_ITEM, B_STRING_TYPE,
-					{ .string = instanceStr }},
-				{ NULL }
-			};
-
-			// Publish child device node for the VMBus channel
-			gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME,
-				attributes, NULL, &newChannel->node);
+			status_t status = _CreateChannel(newChannel);
+			if (status != B_OK) {
+				ERROR("Failed to create channel %u (%s)\n", newChannel->channel_id,
+					strerror(status));
+			}
 		}
 
 		// Handle old channel deregistration
 		if (oldChannel != NULL) {
-			// Acquire and destroy the lock
-			mutex_lock(&oldChannel->lock);
-			mutex_destroy(&oldChannel->lock);
-
-			// TODO
+			_FreeChannel(oldChannel);
 		}
 	}
 
 	return B_OK;
+}
+
+
+status_t
+VMBus::_CreateChannel(VMBusChannelInfo* channelInfo)
+{
+	char typeStr[37];
+	char instanceStr[37];
+
+	snprintf(typeStr, sizeof (typeStr), "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		channelInfo->type_id.data1, channelInfo->type_id.data2, channelInfo->type_id.data3,
+		channelInfo->type_id.data4[0], channelInfo->type_id.data4[1],
+		channelInfo->type_id.data4[2], channelInfo->type_id.data4[3],
+		channelInfo->type_id.data4[4], channelInfo->type_id.data4[5],
+		channelInfo->type_id.data4[6], channelInfo->type_id.data4[7]);
+	snprintf(instanceStr, sizeof (instanceStr),
+		"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		channelInfo->instance_id.data1, channelInfo->instance_id.data2,
+		channelInfo->instance_id.data3, channelInfo->instance_id.data4[0],
+		channelInfo->instance_id.data4[1], channelInfo->instance_id.data4[2],
+		channelInfo->instance_id.data4[3], channelInfo->instance_id.data4[4],
+		channelInfo->instance_id.data4[5], channelInfo->instance_id.data4[6],
+		channelInfo->instance_id.data4[7]);
+	TRACE("Registering VMBus channel %u type %s inst %s\n", channelInfo->channel_id,
+		typeStr, instanceStr);
+
+	// Get the pretty name based on channel ID
+	char prettyName[sizeof (HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT) + 8];
+	snprintf(prettyName, sizeof (prettyName), HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT,
+		channelInfo->channel_id);
+
+	device_attr attributes[] = {
+		{ B_DEVICE_BUS, B_STRING_TYPE,
+			{ .string = HYPERV_BUS_NAME }},
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{ .string = prettyName }},
+		{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
+			{ .ui32 = channelInfo->channel_id }},
+		{ HYPERV_DEVICE_TYPE_ITEM, B_STRING_TYPE,
+			{ .string = typeStr }},
+		{ HYPERV_INSTANCE_ID_ITEM, B_STRING_TYPE,
+			{ .string = instanceStr }},
+		{ NULL }
+	};
+
+	// Publish child device node for the VMBus channel
+	return gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME,
+		attributes, NULL, &channelInfo->node);
+}
+
+
+void
+VMBus::_FreeChannel(VMBusChannelInfo* channelInfo)
+{
+	// Deregister the child device node and free the channel info
+	gDeviceManager->unregister_node(channelInfo->node);
+
+	mutex_lock(&channelInfo->lock);
+	uint32 channel = channelInfo->channel_id;
+
+	VMBusGPADLInfoList::Iterator iterator = channelInfo->gpadls.GetIterator();
+	while (iterator.HasNext()) {
+		VMBusGPADLInfo* gpadlInfo = iterator.Next();
+		channelInfo->gpadls.Remove(gpadlInfo);
+		delete_area(gpadlInfo->areaid);
+		delete gpadlInfo;
+	}
+
+	mutex_destroy(&channelInfo->lock);
+	delete channelInfo;
+
+	// Notify Hyper-V channel ID can be released
+	VMBusMsgInfo* msgInfo = _AllocMsgInfo();
+	if (msgInfo == NULL) {
+		return;
+	}
+
+	vmbus_msg_free_channel* message = &msgInfo->message->free_channel;
+	message->header.type = VMBUS_MSGTYPE_FREE_CHANNEL;
+	message->header.reserved = 0;
+	message->channel_id = channel;
+
+	status_t status = _SendMessage(msgInfo);
+	if (status != B_OK)
+		ERROR("Failed to send free channel msg (%s)\n", strerror(status));
+
+	_ReturnFreeMsgInfo(msgInfo);
+
+	TRACE("Freed channel %u\n", channel);
 }
 
 

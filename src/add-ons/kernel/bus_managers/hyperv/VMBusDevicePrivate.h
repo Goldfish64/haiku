@@ -48,7 +48,7 @@ public:
 
 			status_t				Open(uint32 txLength, uint32 rxLength,
 										hyperv_device_callback callback, void* callbackData);
-			status_t				Close();
+			void					Close();
 			status_t				WritePacket(uint16 type, const void* buffer, uint32 length,
 										bool responseRequired, uint64 transactionID);
 			status_t				PeekPacket(void* _buffer, uint32 length);

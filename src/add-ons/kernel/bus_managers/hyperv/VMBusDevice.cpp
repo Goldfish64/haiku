@@ -49,7 +49,11 @@ VMBusDevice::VMBusDevice(device_node* node)
 
 VMBusDevice::~VMBusDevice()
 {
+	CALLED();
 
+	mutex_destroy(&fLock);
+	if (fDPCHandle != NULL)
+		gDPC->delete_dpc_queue(fDPCHandle);
 }
 
 
@@ -117,8 +121,7 @@ VMBusDevice::Open(uint32 txLength, uint32 rxLength,
 		(hyperv_device_callback)((fCallback != NULL) ? _CallbackHandler : NULL),
 		(fCallback != NULL) ? this : NULL);
 	if (status != B_OK) {
-		ERROR("Failed to open channel %u (%s)\n",
-			fChannelID, strerror(status));
+		ERROR("Failed to open channel %u (%s)\n", fChannelID, strerror(status));
 		mutex_unlock(&fLock);
 		return status;
 	}
@@ -131,10 +134,36 @@ VMBusDevice::Open(uint32 txLength, uint32 rxLength,
 }
 
 
-status_t
+void
 VMBusDevice::Close()
 {
-	return B_OK;
+	status_t status = mutex_lock(&fLock);
+	if (status != B_OK)
+		return;
+
+	if (!fIsOpen) {
+		mutex_unlock(&fLock);
+		return;
+	}
+	fIsOpen = false;
+
+	// Close the channel
+	status = fVMBus->close_channel(fVMBusCookie, fChannelID);
+	if (status != B_OK)
+		ERROR("Failed to close channel %u (%s)\n", fChannelID, strerror(status));
+
+	// Free the ring buffer GPADL
+	status = fVMBus->free_gpadl(fVMBusCookie, fChannelID, fRingGPADL);
+	if (status != B_OK)
+		ERROR("Failed to free ring GPADL for channel %u (%s)\n", fChannelID, strerror(status));
+
+	// Free callback DPC
+	if (fDPCHandle != NULL) {
+		gDPC->delete_dpc_queue(fDPCHandle);
+		fDPCHandle = NULL;
+	}
+
+	mutex_unlock(&fLock);
 }
 
 

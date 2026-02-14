@@ -57,12 +57,12 @@ vmbus_open(hyperv_device cookie, uint32 txLength, uint32 rxLength,
 }
 
 
-static status_t
+static void
 vmbus_close(hyperv_device cookie)
 {
 	CALLED();
 	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(cookie);
-	return device->Close();
+	device->Close();
 }
 
 
