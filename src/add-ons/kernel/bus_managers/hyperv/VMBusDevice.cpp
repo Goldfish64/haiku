@@ -29,8 +29,6 @@ VMBusDevice::VMBusDevice(device_node* node)
 {
 	CALLED();
 
-
-
 	fStatus = gDeviceManager->get_attr_uint32(fNode, HYPERV_CHANNEL_ID_ITEM,
 		&fChannelID, false);
 	if (fStatus != B_OK) {
